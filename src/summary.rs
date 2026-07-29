@@ -1,4 +1,4 @@
-use crate::SummarySettings;
+use crate::{playwright, SummarySettings};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Profile {
@@ -58,13 +58,7 @@ impl Profile {
 
 pub(crate) fn detect_profile(output: &str) -> Profile {
     let lines: Vec<&str> = output.lines().collect();
-    let playwright_heading = lines.iter().any(|line| is_playwright_heading(line));
-    let playwright_evidence = output.contains("Call log:")
-        || output.contains("attachment #")
-        || output.contains("trace.zip")
-        || output.contains("test-results/");
-
-    if playwright_heading && playwright_evidence {
+    if playwright::detect(output) {
         Profile::Playwright
     } else if lines
         .iter()
@@ -154,7 +148,7 @@ pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettin
             "[additional build output omitted]",
         ),
         Profile::Composer => summarize_composer(output, settings.summary_lines),
-        Profile::Playwright => summarize_playwright(output, settings.summary_lines),
+        Profile::Playwright => playwright::summarize(output, settings.summary_lines),
         Profile::Auto | Profile::Generic => tail_lines(output, settings.summary_lines),
     }
 }
@@ -230,10 +224,7 @@ fn summarize_eslint(output: &str, maximum: usize) -> Vec<String> {
 }
 
 fn summarize_typescript(output: &str, maximum: usize) -> Vec<String> {
-    let errors: Vec<&str> = output
-        .lines()
-        .filter(|line| contains_typescript_error(line))
-        .collect();
+    let errors: Vec<&str> = output.lines().filter(|line| contains_typescript_error(line)).collect();
     let mut result: Vec<String> = errors
         .iter()
         .take(maximum)
@@ -328,101 +319,6 @@ fn summarize_composer(output: &str, maximum: usize) -> Vec<String> {
         .collect()
 }
 
-fn summarize_playwright(output: &str, maximum: usize) -> Vec<String> {
-    let lines: Vec<&str> = output.lines().collect();
-    let Some(heading_index) = lines.iter().position(|line| is_playwright_heading(line)) else {
-        return Vec::new();
-    };
-    let heading = lines[heading_index].to_string();
-    let mut error = None;
-    let mut fallback = None;
-    let mut call_log = None;
-    let mut call_detail = None;
-    let mut attachment = None;
-    let mut attachment_path = None;
-    let mut result_line = None;
-    let mut in_call_log = false;
-
-    for line in &lines[heading_index + 1..] {
-        let trimmed = line.trim();
-        if is_playwright_result(trimmed) {
-            result_line = Some(normalize_playwright_result(trimmed));
-            continue;
-        }
-        if error.is_none()
-            && (trimmed.starts_with("Error:")
-                || trimmed.contains("Error:")
-                || trimmed.starts_with("expect("))
-        {
-            error = Some((*line).to_string());
-        }
-        if fallback.is_none()
-            && !trimmed.is_empty()
-            && !trimmed.starts_with("Call log:")
-            && !trimmed.starts_with("attachment #")
-        {
-            fallback = Some((*line).to_string());
-        }
-        if trimmed.starts_with("Call log:") {
-            call_log = Some(trimmed.to_string());
-            in_call_log = true;
-            continue;
-        }
-        if in_call_log
-            && call_detail.is_none()
-            && !trimmed.is_empty()
-            && !trimmed.starts_with("attachment #")
-        {
-            call_detail = Some(trimmed.to_string());
-        }
-        if trimmed.starts_with("attachment #") {
-            attachment = Some(trimmed.to_string());
-            in_call_log = false;
-        }
-        if attachment_path.is_none()
-            && (line.contains("test-results/") || line.contains("trace.zip"))
-        {
-            attachment_path = Some(trimmed.to_string());
-        }
-    }
-
-    let reserved = usize::from(result_line.is_some());
-    let available = maximum.saturating_sub(reserved);
-    let mut result = Vec::new();
-    if result.len() < available {
-        result.push(heading);
-    }
-    if result.len() < available {
-        if let Some(line) = error.or(fallback) {
-            result.push(line);
-        }
-    }
-    if result.len() < available {
-        if let Some(mut line) = call_log {
-            if let Some(detail) = call_detail {
-                line.push(' ');
-                line.push_str(&detail);
-            }
-            result.push(line);
-        }
-    }
-    if result.len() < available {
-        if let Some(mut line) = attachment {
-            if let Some(path) = attachment_path {
-                line.push(' ');
-                line.push_str(&path);
-            }
-            result.push(line);
-        } else if let Some(path) = attachment_path {
-            result.push(path);
-        }
-    }
-    if let Some(line) = result_line {
-        result.push(line);
-    }
-    result
-}
-
 fn capture_from<F>(output: &str, maximum: usize, starts: F, omitted: &str) -> Vec<String>
 where
     F: Fn(&str) -> bool,
@@ -484,9 +380,7 @@ fn is_eslint_error(line: &str) -> bool {
         .is_some_and(|(line_number, column)| {
             !line_number.is_empty()
                 && !column.is_empty()
-                && line_number
-                    .chars()
-                    .all(|character| character.is_ascii_digit())
+                && line_number.chars().all(|character| character.is_ascii_digit())
                 && column.chars().all(|character| character.is_ascii_digit())
         })
         && parts.next() == Some("error")
@@ -497,51 +391,4 @@ fn is_phpunit_test_heading(line: &str) -> bool {
         return false;
     };
     number.chars().all(|character| character.is_ascii_digit()) && rest.contains("::")
-}
-
-fn is_playwright_heading(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    let Some((number, rest)) = trimmed.split_once(") ") else {
-        return false;
-    };
-    if !number.chars().all(|character| character.is_ascii_digit()) {
-        return false;
-    }
-    [
-        ".spec.cjs:",
-        ".spec.js:",
-        ".spec.jsx:",
-        ".spec.mjs:",
-        ".spec.ts:",
-        ".spec.tsx:",
-        ".setup.cjs:",
-        ".setup.js:",
-        ".setup.jsx:",
-        ".setup.mjs:",
-        ".setup.ts:",
-        ".setup.tsx:",
-    ]
-    .iter()
-    .any(|pattern| rest.contains(pattern))
-}
-
-fn is_playwright_result(line: &str) -> bool {
-    if line.is_empty() {
-        return false;
-    }
-    line.split(',').all(|part| {
-        let mut words = part.split_whitespace();
-        words
-            .next()
-            .and_then(|value| value.parse::<usize>().ok())
-            .is_some()
-            && matches!(words.next(), Some("passed" | "failed" | "skipped"))
-    })
-}
-
-fn normalize_playwright_result(line: &str) -> String {
-    line.split(',')
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("; ")
 }

@@ -103,7 +103,7 @@ fn control_sequences_are_removed_from_summary() {
     let output = run(
         "controls",
         Some("generic"),
-        "printf '\033[31mred\033[0m\r\n\033]8;;https://example.invalid\alink\033]8;;\033\\\n'; exit 1",
+        r"printf '\033[31mred\033[0m\r\n\033]8;;https://example.invalid\alink\033]8;;\033\\\n'; exit 1",
     );
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(1));

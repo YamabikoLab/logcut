@@ -19,13 +19,62 @@ It is a Rust port of the existing Bash `quiet-run` command used in `yamabiko-flo
 
 ## Requirements
 
-- Linux
-- Rust 1.70 or later when building from source
+- Linux x86_64 for the prebuilt binary
+- Linux and Rust 1.70 or later when building from source
+
+## Install from GitHub Release
+
+Download both of these files from the `v0.1.0` GitHub Release:
+
+```text
+logcut-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+SHA256SUMS
+```
+
+Verify the archive, extract it, and install the binary for the current user:
+
+```bash
+sha256sum --check SHA256SUMS
+tar -xzf logcut-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+mkdir -p ~/.local/bin
+install -m 0755 logcut ~/.local/bin/logcut
+```
+
+Make sure `~/.local/bin` is included in `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+command -v logcut
+```
+
+Run a harmless command through the installed binary to confirm that it works:
+
+```bash
+logcut true
+```
+
+Expected output is similar to:
+
+```text
+Running: true
+PASS (0s): true
+```
+
+## Install from Git
+
+When a Rust toolchain is available, install directly from the repository:
+
+```bash
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.0 --locked
+logcut true
+```
+
+Because this repository is private, Git authentication must already be configured for the environment running `cargo install`.
 
 ## Build
 
 ```bash
-cargo build --release
+cargo build --release --locked
 ```
 
 The binary is created at:
@@ -34,10 +83,10 @@ The binary is created at:
 target/release/logcut
 ```
 
-To install it for the current user:
+To install the current checkout for the current user:
 
 ```bash
-cargo install --path .
+cargo install --path . --locked
 ```
 
 Make sure Cargo's binary directory is included in `PATH`:
@@ -107,8 +156,9 @@ Invalid positive-integer settings are reported and replaced with their defaults.
 
 ```bash
 cargo fmt --check
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo build --release --locked
 ```
 
 ## Scope

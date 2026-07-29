@@ -2,8 +2,6 @@
 
 `logcut` is a Linux command-line tool that runs another command quietly and prints only a short result.
 
-It is a Rust port of the existing Bash `quiet-run` command used in `yamabiko-flow-blocks`. The first implementation intentionally follows the existing behavior instead of adding new features.
-
 ## Behavior
 
 - Prints the command name and argument count before execution.

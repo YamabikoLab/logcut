@@ -199,7 +199,7 @@ fn hup_int_and_term_are_forwarded_and_process_group_is_cleaned_up() {
         let root = temp_dir(&format!("signal-{name}"));
         let child_file = root.join("child");
         let grandchild_file = root.join("grandchild");
-        let mut child = Command::new(binary())
+        let child = Command::new(binary())
             .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
             .args([
                 "sh",

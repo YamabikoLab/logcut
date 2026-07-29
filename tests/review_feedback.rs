@@ -114,7 +114,13 @@ fn playwright_avoids_aggregate_only_false_positive_and_honors_line_limit() {
         .split("Full log:")
         .next()
         .unwrap();
-    assert_eq!(summary.lines().filter(|line| !line.trim().is_empty()).count(), 5);
+    assert_eq!(
+        summary
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count(),
+        5
+    );
     assert!(summary.contains("1 passed; 1 failed"));
 }
 
@@ -179,12 +185,7 @@ fn retained_logs_are_pruned_to_configured_count() {
     let count = fs::read_dir(logs)
         .unwrap()
         .flatten()
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("command.")
-        })
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("command."))
         .count();
     assert_eq!(count, 2);
 }
@@ -224,7 +225,11 @@ fn hup_int_and_term_are_forwarded_and_process_group_is_cleaned_up() {
         assert_eq!(output.status.code(), Some(expected), "{name}: {text}");
         assert!(text.contains(&format!("exit {expected}")), "{name}: {text}");
 
-        let child_pid: i32 = fs::read_to_string(&child_file).unwrap().trim().parse().unwrap();
+        let child_pid: i32 = fs::read_to_string(&child_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         let grandchild_pid: i32 = fs::read_to_string(&grandchild_file)
             .unwrap()
             .trim()
@@ -237,6 +242,9 @@ fn hup_int_and_term_are_forwarded_and_process_group_is_cleaned_up() {
             thread::sleep(Duration::from_millis(20));
         }
         assert!(!process_exists(child_pid), "{name}: child remained");
-        assert!(!process_exists(grandchild_pid), "{name}: grandchild remained");
+        assert!(
+            !process_exists(grandchild_pid),
+            "{name}: grandchild remained"
+        );
     }
 }

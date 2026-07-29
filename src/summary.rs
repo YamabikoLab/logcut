@@ -224,7 +224,10 @@ fn summarize_eslint(output: &str, maximum: usize) -> Vec<String> {
 }
 
 fn summarize_typescript(output: &str, maximum: usize) -> Vec<String> {
-    let errors: Vec<&str> = output.lines().filter(|line| contains_typescript_error(line)).collect();
+    let errors: Vec<&str> = output
+        .lines()
+        .filter(|line| contains_typescript_error(line))
+        .collect();
     let mut result: Vec<String> = errors
         .iter()
         .take(maximum)
@@ -380,7 +383,9 @@ fn is_eslint_error(line: &str) -> bool {
         .is_some_and(|(line_number, column)| {
             !line_number.is_empty()
                 && !column.is_empty()
-                && line_number.chars().all(|character| character.is_ascii_digit())
+                && line_number
+                    .chars()
+                    .all(|character| character.is_ascii_digit())
                 && column.chars().all(|character| character.is_ascii_digit())
         })
         && parts.next() == Some("error")

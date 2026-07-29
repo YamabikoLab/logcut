@@ -37,7 +37,9 @@ pub(crate) fn summarize(output: &str, maximum: usize) -> Vec<String> {
             && !trimmed.is_empty()
             && !trimmed.starts_with("Call log:")
             && !trimmed.starts_with("attachment #")
-            && !trimmed.chars().all(|character| matches!(character, '-' | '='))
+            && !trimmed
+                .chars()
+                .all(|character| matches!(character, '-' | '='))
         {
             fallback = Some((*line).to_string());
         }
@@ -163,9 +165,7 @@ fn has_location(value: &str, require_spec: bool) -> Option<usize> {
                 continue;
             }
 
-            return Some(
-                index + marker.len() + line_number.len() + 1 + column_length,
-            );
+            return Some(index + marker.len() + line_number.len() + 1 + column_length);
         }
     }
 

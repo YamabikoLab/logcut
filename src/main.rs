@@ -4,6 +4,7 @@
 compile_error!("logcut currently supports Linux only");
 
 mod logging;
+mod playwright;
 mod process;
 mod summary;
 

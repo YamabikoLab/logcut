@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
@@ -106,7 +107,7 @@ pub(crate) fn prune_logs(directory: &Path, max_age_days: u64, max_files: usize) 
         }
     }
 
-    logs.sort_by(|left, right| right.0.cmp(&left.0));
+    logs.sort_by_key(|entry| Reverse(entry.0));
     for (_, path) in logs.into_iter().skip(max_files) {
         let _ = fs::remove_file(path);
     }

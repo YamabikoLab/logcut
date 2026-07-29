@@ -71,7 +71,7 @@ pub(crate) fn detect_profile(output: &str) -> Profile {
         .any(|line| line.starts_with(" FAIL  ") && line.contains(".test."))
     {
         Profile::Vitest
-    } else if output.lines().any(|line| contains_typescript_error(line)) {
+    } else if output.lines().any(contains_typescript_error) {
         Profile::Typescript
     } else if output.lines().any(is_eslint_error) {
         Profile::Eslint
@@ -530,11 +530,12 @@ fn is_playwright_result(line: &str) -> bool {
         return false;
     }
     line.split(',').all(|part| {
-        let mut words = part.trim().split_whitespace();
-        matches!(
-            words.next().and_then(|value| value.parse::<usize>().ok()),
-            Some(_)
-        ) && matches!(words.next(), Some("passed" | "failed" | "skipped"))
+        let mut words = part.split_whitespace();
+        words
+            .next()
+            .and_then(|value| value.parse::<usize>().ok())
+            .is_some()
+            && matches!(words.next(), Some("passed" | "failed" | "skipped"))
     })
 }
 

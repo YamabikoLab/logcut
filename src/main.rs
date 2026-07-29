@@ -161,7 +161,11 @@ fn run() -> io::Result<i32> {
     }
     eprintln!("\nFull log: {}", log_path.display());
 
-    prune_logs(&settings.log_directory, settings.max_log_age_days, settings.max_log_files);
+    prune_logs(
+        &settings.log_directory,
+        settings.max_log_age_days,
+        settings.max_log_files,
+    );
     Ok(status)
 }
 

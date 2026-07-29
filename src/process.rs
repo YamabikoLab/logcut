@@ -69,7 +69,11 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
         {
             let mut log = OpenOptions::new().append(true).open(log_path)?;
             writeln!(log, "logcut: failed to execute command: {error}")?;
-            return Ok(if error.kind() == io::ErrorKind::NotFound { 127 } else { 126 });
+            return Ok(if error.kind() == io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            });
         }
         Err(error) => return Err(error),
     };

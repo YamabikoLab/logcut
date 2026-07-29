@@ -163,4 +163,4 @@ cargo build --release --locked
 
 ## Scope
 
-This initial version targets Linux only and does not include features that were not present in the original `quiet-run` implementation.
+This initial version targets Linux only.

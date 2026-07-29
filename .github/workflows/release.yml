@@ -1,0 +1,91 @@
+name: Release v0.1.0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-v0.1.0
+  cancel-in-progress: false
+
+env:
+  TAG: v0.1.0
+  TARGET: x86_64-unknown-linux-gnu
+  ARCHIVE: logcut-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+
+jobs:
+  release:
+    name: Build and publish Linux x86_64 release
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release state and package version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if git rev-parse --verify --quiet "refs/tags/${TAG}"; then
+            echo "Tag ${TAG} already exists."
+            exit 1
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists."
+            exit 1
+          fi
+
+          package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "v${package_version}" != "${TAG}" ]; then
+            echo "Cargo.toml version v${package_version} does not match ${TAG}."
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build release binary
+        run: cargo build --release --locked --target "${TARGET}"
+
+      - name: Package and verify artifacts
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          install -m 0755 "target/${TARGET}/release/logcut" dist/logcut
+          dist/logcut true
+
+          tar -C dist -czf "${ARCHIVE}" logcut
+          sha256sum "${ARCHIVE}" > SHA256SUMS
+
+          tar -tzf "${ARCHIVE}" | grep -qx 'logcut'
+          sha256sum --check SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${TAG}" \
+            "${ARCHIVE}" \
+            SHA256SUMS \
+            --target "${GITHUB_SHA}" \
+            --title "logcut ${TAG}" \
+            --notes-file .github/release-notes/v0.1.0.md

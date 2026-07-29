@@ -32,6 +32,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Release must be run from main, but got ${GITHUB_REF}."
+            exit 1
+          fi
+
           if git rev-parse --verify --quiet "refs/tags/${TAG}"; then
             echo "Tag ${TAG} already exists."
             exit 1

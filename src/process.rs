@@ -51,6 +51,33 @@ fn process_group_is_alive(process_group: i32) -> bool {
     unsafe { kill(-process_group, 0) == 0 }
 }
 
+fn wait_for_process_group(process_group: i32, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    while process_group_is_alive(process_group) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn finish_forwarded_signal(
+    process_group: i32,
+    forwarded_at: Instant,
+    already_killed: bool,
+) {
+    if !already_killed {
+        wait_for_process_group(
+            process_group,
+            SIGNAL_GRACE_PERIOD.saturating_sub(forwarded_at.elapsed()),
+        );
+    }
+
+    if process_group_is_alive(process_group) {
+        if let Err(error) = send_signal_to_group(process_group, SIGKILL) {
+            eprintln!("logcut: failed to terminate process group: {error}");
+        }
+        wait_for_process_group(process_group, SIGNAL_GRACE_PERIOD);
+    }
+}
+
 pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     install_signal_handlers()?;
@@ -137,6 +164,9 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
     };
 
     if forwarded != 0 {
+        if let Some(time) = forwarded_at {
+            finish_forwarded_signal(process_group, time, killed);
+        }
         return Ok(128 + forwarded);
     }
 

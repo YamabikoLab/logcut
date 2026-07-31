@@ -26,9 +26,7 @@ pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf
     fs::create_dir_all(&settings.log_directory)?;
     fs::set_permissions(&settings.log_directory, fs::Permissions::from_mode(0o700))?;
     let metadata = fs::metadata(&settings.log_directory)?;
-    if !metadata.is_dir()
-        || metadata.uid() != current_user_id()
-        || metadata.mode() & 0o777 != 0o700
+    if !metadata.is_dir() || metadata.uid() != current_user_id() || metadata.mode() & 0o777 != 0o700
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -149,9 +147,7 @@ pub(crate) fn normalize_output(mut input: Vec<u8>) -> String {
                         read_index += 1;
                         break;
                     }
-                    if input[read_index] == 0x1b
-                        && input.get(read_index + 1) == Some(&b'\\')
-                    {
+                    if input[read_index] == 0x1b && input.get(read_index + 1) == Some(&b'\\') {
                         read_index += 2;
                         break;
                     }

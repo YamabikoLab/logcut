@@ -6,13 +6,14 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SIGHUP: i32 = 1;
 const SIGINT: i32 = 2;
 const SIGKILL: i32 = 9;
 const SIGTERM: i32 = 15;
 const SIG_ERR: usize = usize::MAX;
+const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
@@ -98,13 +99,18 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
     };
     let process_group = child.id() as i32;
     let mut forwarded = 0;
+    let mut forwarded_at = None;
+    let mut killed = false;
 
     let exit_status = loop {
         if forwarded == 0 {
             let received = RECEIVED_SIGNAL.swap(0, Ordering::SeqCst);
             if received != 0 {
                 match send_signal_to_group(process_group, received) {
-                    Ok(()) => forwarded = received,
+                    Ok(()) => {
+                        forwarded = received;
+                        forwarded_at = Some(Instant::now());
+                    }
                     Err(_) if child.try_wait()?.is_none() => {
                         RECEIVED_SIGNAL.store(received, Ordering::SeqCst);
                     }
@@ -112,6 +118,18 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
                 }
             }
         }
+
+        if forwarded != 0
+            && !killed
+            && forwarded_at.is_some_and(|time| time.elapsed() >= SIGNAL_GRACE_PERIOD)
+            && process_group_is_alive(process_group)
+        {
+            if let Err(error) = send_signal_to_group(process_group, SIGKILL) {
+                eprintln!("logcut: failed to terminate process group: {error}");
+            }
+            killed = true;
+        }
+
         if let Some(status) = child.try_wait()? {
             break status;
         }
@@ -119,17 +137,6 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
     };
 
     if forwarded != 0 {
-        for _ in 0..50 {
-            if !process_group_is_alive(process_group) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        if process_group_is_alive(process_group) {
-            if let Err(error) = send_signal_to_group(process_group, SIGKILL) {
-                eprintln!("logcut: failed to terminate process group: {error}");
-            }
-        }
         return Ok(128 + forwarded);
     }
 

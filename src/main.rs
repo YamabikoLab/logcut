@@ -49,21 +49,19 @@ fn main() {
 }
 
 fn run() -> io::Result<i32> {
-    set_private_umask();
+    let original_umask = set_private_umask();
 
     let Some((arguments, profile)) = read_command_line() else {
         return Ok(2);
     };
     let settings = settings_from_environment(profile);
 
-    run_command(&arguments, &settings)
+    run_command(&arguments, &settings, original_umask)
 }
 
-fn set_private_umask() {
-    // SAFETY: `umask` accepts any mode value and has no failure return.
-    unsafe {
-        umask(0o077);
-    }
+fn set_private_umask() -> u32 {
+    // SAFETY: `umask` accepts any mode value, returns the previous mask, and cannot fail.
+    unsafe { umask(0o077) }
 }
 
 fn read_command_line() -> Option<(Vec<OsString>, Profile)> {
@@ -130,7 +128,11 @@ fn current_user_id() -> u32 {
     unsafe { getuid() }
 }
 
-fn run_command(arguments: &[OsString], settings: &Settings) -> io::Result<i32> {
+fn run_command(
+    arguments: &[OsString],
+    settings: &Settings,
+    original_umask: u32,
+) -> io::Result<i32> {
     let label = command_label(arguments);
     let start = Instant::now();
     println!("Running: {label}");
@@ -142,18 +144,18 @@ fn run_command(arguments: &[OsString], settings: &Settings) -> io::Result<i32> {
             eprintln!(
                 "logcut: secure logging is unavailable; running command without output suppression"
             );
-            return run_direct(arguments);
+            return run_direct(arguments, original_umask);
         }
     };
 
-    let status = match run_suppressed(arguments, &log_path) {
+    let status = match run_suppressed(arguments, &log_path, original_umask) {
         Ok(status) => status,
         Err(error) => {
             let _ = fs::remove_file(&log_path);
             eprintln!(
                 "logcut: command setup failed ({error}); running command without output suppression"
             );
-            return run_direct(arguments);
+            return run_direct(arguments, original_umask);
         }
     };
 

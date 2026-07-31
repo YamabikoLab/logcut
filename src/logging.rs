@@ -27,7 +27,7 @@ pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf
     fs::set_permissions(&settings.log_directory, fs::Permissions::from_mode(0o700))?;
     let metadata = fs::metadata(&settings.log_directory)?;
     if !metadata.is_dir()
-        || metadata.uid() != unsafe { getuid() }
+        || metadata.uid() != current_user_id()
         || metadata.mode() & 0o777 != 0o700
     {
         return Err(io::Error::new(
@@ -43,6 +43,11 @@ pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf
     );
 
     create_unique_log(&settings.log_directory)
+}
+
+fn current_user_id() -> u32 {
+    // SAFETY: `getuid` takes no arguments and has no failure mode.
+    unsafe { getuid() }
 }
 
 fn create_unique_log(directory: &Path) -> io::Result<PathBuf> {
@@ -120,41 +125,50 @@ pub(crate) fn read_log(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) fn normalize_output(input: &[u8]) -> String {
-    let mut output = Vec::with_capacity(input.len());
-    let mut index = 0;
-    while index < input.len() {
-        match input[index] {
-            b'\r' => index += 1,
-            0x1b if input.get(index + 1) == Some(&b'[') => {
-                index += 2;
-                while index < input.len() {
-                    let byte = input[index];
-                    index += 1;
+pub(crate) fn normalize_output(mut input: Vec<u8>) -> String {
+    let mut read_index = 0;
+    let mut write_index = 0;
+
+    while read_index < input.len() {
+        match input[read_index] {
+            b'\r' => read_index += 1,
+            0x1b if input.get(read_index + 1) == Some(&b'[') => {
+                read_index += 2;
+                while read_index < input.len() {
+                    let byte = input[read_index];
+                    read_index += 1;
                     if (0x40..=0x7e).contains(&byte) {
                         break;
                     }
                 }
             }
-            0x1b if input.get(index + 1) == Some(&b']') => {
-                index += 2;
-                while index < input.len() {
-                    if input[index] == 0x07 {
-                        index += 1;
+            0x1b if input.get(read_index + 1) == Some(&b']') => {
+                read_index += 2;
+                while read_index < input.len() {
+                    if input[read_index] == 0x07 {
+                        read_index += 1;
                         break;
                     }
-                    if input[index] == 0x1b && input.get(index + 1) == Some(&b'\\') {
-                        index += 2;
+                    if input[read_index] == 0x1b
+                        && input.get(read_index + 1) == Some(&b'\\')
+                    {
+                        read_index += 2;
                         break;
                     }
-                    index += 1;
+                    read_index += 1;
                 }
             }
             byte => {
-                output.push(byte);
-                index += 1;
+                input[write_index] = byte;
+                write_index += 1;
+                read_index += 1;
             }
         }
     }
-    String::from_utf8_lossy(&output).into_owned()
+
+    input.truncate(write_index);
+    match String::from_utf8(input) {
+        Ok(output) => output,
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    }
 }

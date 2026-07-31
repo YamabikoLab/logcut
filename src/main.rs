@@ -179,7 +179,16 @@ fn handle_command_result(
         return Ok(0);
     }
 
-    let clean = normalize_output(read_log(log_path)?);
+    let raw = match read_log(log_path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            eprintln!("FAIL ({elapsed}s, exit {status}): {label}");
+            eprintln!("logcut: failure summary could not be generated: {error}");
+            eprintln!("Full log: {}", log_path.display());
+            return Ok(status);
+        }
+    };
+    let clean = normalize_output(raw);
     let selected = if settings.profile == Profile::Auto {
         detect_profile(&clean)
     } else {
@@ -193,6 +202,7 @@ fn handle_command_result(
     if !summary.iter().any(|line| !line.trim().is_empty()) {
         summary = summarize(Profile::Generic, &clean, &summary_settings);
     }
+    limit_summary(&mut summary, settings.summary_lines);
 
     eprintln!("FAIL ({elapsed}s, exit {status}): {label}");
     eprintln!("\n----- Failure summary ({}) -----", selected.as_str());
@@ -207,6 +217,15 @@ fn handle_command_result(
         settings.max_log_files,
     );
     Ok(status)
+}
+
+fn limit_summary(summary: &mut Vec<String>, maximum: usize) {
+    if summary.len() <= maximum {
+        return;
+    }
+
+    summary.truncate(maximum.saturating_sub(1));
+    summary.push("[additional summary lines omitted]".to_string());
 }
 
 fn positive_setting(name: &str, value: Option<String>, fallback: usize, maximum: usize) -> usize {

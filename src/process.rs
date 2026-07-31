@@ -58,11 +58,7 @@ fn wait_for_process_group(process_group: i32, duration: Duration) {
     }
 }
 
-fn finish_forwarded_signal(
-    process_group: i32,
-    forwarded_at: Instant,
-    already_killed: bool,
-) {
+fn finish_forwarded_signal(process_group: i32, forwarded_at: Instant, already_killed: bool) {
     if !already_killed {
         wait_for_process_group(
             process_group,

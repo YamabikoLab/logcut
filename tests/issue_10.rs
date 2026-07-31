@@ -52,7 +52,10 @@ fn large_failure_log_reads_only_a_bounded_tail() {
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(5));
     assert!(text.contains("TAIL-MARKER"));
-    assert!(text.len() < 10_000, "summary unexpectedly retained the full log");
+    assert!(
+        text.len() < 10_000,
+        "summary unexpectedly retained the full log"
+    );
 }
 
 #[test]
@@ -60,11 +63,7 @@ fn ignored_forwarded_signal_is_escalated() {
     let root = temp_dir("signal-escalation");
     let mut child = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
-        .args([
-            "sh",
-            "-c",
-            "trap '' TERM; while :; do sleep 1; done",
-        ])
+        .args(["sh", "-c", "trap '' TERM; while :; do sleep 1; done"])
         .spawn()
         .unwrap();
 

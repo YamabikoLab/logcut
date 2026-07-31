@@ -1,4 +1,4 @@
-name: Release v0.1.0
+name: Release v0.1.1
 
 on:
   workflow_dispatch:
@@ -7,13 +7,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-v0.1.0
+  group: release-v0.1.1
   cancel-in-progress: false
 
 env:
-  TAG: v0.1.0
+  TAG: v0.1.1
   TARGET: x86_64-unknown-linux-gnu
-  ARCHIVE: logcut-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+  ARCHIVE: logcut-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
 
 jobs:
   release:
@@ -93,4 +93,4 @@ jobs:
             SHA256SUMS \
             --target "${GITHUB_SHA}" \
             --title "logcut ${TAG}" \
-            --notes-file .github/release-notes/v0.1.0.md
+            --notes-file .github/release-notes/v0.1.1.md

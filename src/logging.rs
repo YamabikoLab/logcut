@@ -1,10 +1,12 @@
 use std::cmp::Reverse;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const FAILURE_LOG_TAIL_BYTES: u64 = 1024 * 1024;
 
 extern "C" {
     fn getuid() -> u32;
@@ -118,8 +120,21 @@ pub(crate) fn prune_logs(directory: &Path, max_age_days: u64, max_files: usize) 
 
 pub(crate) fn read_log(path: &Path) -> io::Result<Vec<u8>> {
     let mut file = File::open(path)?;
-    let mut bytes = Vec::new();
+    let length = file.metadata()?.len();
+    let start = length.saturating_sub(FAILURE_LOG_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start))?;
+
+    let mut bytes = Vec::with_capacity((length - start) as usize);
     file.read_to_end(&mut bytes)?;
+
+    if start > 0 {
+        if let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {
+            bytes.drain(..=newline);
+        } else {
+            bytes.clear();
+        }
+    }
+
     Ok(bytes)
 }
 

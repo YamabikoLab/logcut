@@ -12,6 +12,7 @@
 - Returns the original command exit code.
 - Forwards stdin to the child command.
 - Forwards `HUP`, `INT`, and `TERM` to the child process group.
+- Runs the child command with the caller's original umask.
 - Removes ANSI escape sequences, OSC hyperlinks, and carriage returns from summaries.
 - Restricts the log directory to mode `0700` and prunes old logs.
 
@@ -22,10 +23,10 @@
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.2` GitHub Release:
+Download both of these files from the `v0.1.3` GitHub Release:
 
 ```text
-logcut-v0.1.2-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -33,7 +34,7 @@ Verify the archive, extract it, and install the binary for the current user:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.2-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -63,7 +64,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.2 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.3 --locked
 logcut true
 ```
 

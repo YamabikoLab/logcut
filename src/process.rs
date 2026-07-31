@@ -21,6 +21,7 @@ extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
     fn setsid() -> i32;
     fn signal(signal: i32, handler: extern "C" fn(i32)) -> usize;
+    fn umask(mask: u32) -> u32;
 }
 
 extern "C" fn record_signal(signal: i32) {
@@ -74,7 +75,11 @@ fn finish_forwarded_signal(process_group: i32, forwarded_at: Instant, already_ki
     }
 }
 
-pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Result<i32> {
+pub(crate) fn run_suppressed(
+    arguments: &[OsString],
+    log_path: &Path,
+    original_umask: u32,
+) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     install_signal_handlers()?;
     let log = OpenOptions::new().append(true).open(log_path)?;
@@ -90,10 +95,11 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
         .stdout(stdout)
         .stderr(stderr);
 
-    // SAFETY: `pre_exec` runs after fork and before exec; the closure only calls async-signal-safe
-    // `setsid` and converts its failure into an `io::Error`.
+    // SAFETY: `pre_exec` runs after fork and before exec; the closure only calls
+    // async-signal-safe functions and converts the `setsid` failure into an `io::Error`.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
+            umask(original_umask);
             if setsid() == -1 {
                 Err(io::Error::last_os_error())
             } else {
@@ -171,7 +177,13 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
         .unwrap_or_else(|| 128 + exit_status.signal().unwrap_or(1)))
 }
 
-pub(crate) fn run_direct(arguments: &[OsString]) -> io::Result<i32> {
+pub(crate) fn run_direct(arguments: &[OsString], original_umask: u32) -> io::Result<i32> {
+    // SAFETY: `umask` accepts any mode value and cannot fail. Restore the caller's mask before
+    // replacing this process so the command behaves exactly as it would without `logcut`.
+    unsafe {
+        umask(original_umask);
+    }
+
     let error = Command::new(&arguments[0])
         .args(&arguments[1..])
         .env("NO_COLOR", "1")

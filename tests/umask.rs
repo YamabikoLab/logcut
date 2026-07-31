@@ -30,15 +30,13 @@ fn temp_dir(name: &str) -> PathBuf {
 
 fn run_with_umask(logs: &Path, destination: &Path, mask: u32) -> Output {
     let mut command = Command::new(binary());
-    command
-        .env("LOGCUT_LOG_DIRECTORY", logs)
-        .args([
-            "sh",
-            "-c",
-            "printf data >\"$1\"",
-            "_",
-            destination.to_str().unwrap(),
-        ]);
+    command.env("LOGCUT_LOG_DIRECTORY", logs).args([
+        "sh",
+        "-c",
+        "printf data >\"$1\"",
+        "_",
+        destination.to_str().unwrap(),
+    ]);
 
     // SAFETY: This runs in the test child immediately before exec and only sets its umask.
     unsafe {

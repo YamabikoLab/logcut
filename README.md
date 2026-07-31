@@ -22,10 +22,10 @@
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.0` GitHub Release:
+Download both of these files from the `v0.1.1` GitHub Release:
 
 ```text
-logcut-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -33,7 +33,7 @@ Verify the archive, extract it, and install the binary for the current user:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -63,7 +63,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.0 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.1 --locked
 logcut true
 ```
 

@@ -124,8 +124,9 @@ pub(crate) fn read_log(path: &Path) -> io::Result<Vec<u8>> {
     let start = length.saturating_sub(FAILURE_LOG_TAIL_BYTES);
     file.seek(SeekFrom::Start(start))?;
 
-    let mut bytes = Vec::with_capacity((length - start) as usize);
-    file.read_to_end(&mut bytes)?;
+    let read_limit = length - start;
+    let mut bytes = Vec::with_capacity(read_limit as usize);
+    file.take(read_limit).read_to_end(&mut bytes)?;
 
     if start > 0 {
         if let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {

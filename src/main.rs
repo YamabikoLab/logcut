@@ -49,10 +49,24 @@ fn main() {
 }
 
 fn run() -> io::Result<i32> {
+    set_private_umask();
+
+    let Some((arguments, profile)) = read_command_line() else {
+        return Ok(2);
+    };
+    let settings = settings_from_environment(profile);
+
+    run_command(&arguments, &settings)
+}
+
+fn set_private_umask() {
+    // SAFETY: `umask` accepts any mode value and has no failure return.
     unsafe {
         umask(0o077);
     }
+}
 
+fn read_command_line() -> Option<(Vec<OsString>, Profile)> {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
 
@@ -65,15 +79,19 @@ fn run() -> io::Result<i32> {
 
     let Some(profile) = Profile::parse(&profile_value) else {
         eprintln!("Unknown profile: {profile_value}");
-        return Ok(2);
+        return None;
     };
 
     if arguments.is_empty() {
         eprintln!("Usage: logcut [--profile=PROFILE] <command> [arguments...]");
-        return Ok(2);
+        return None;
     }
 
-    let settings = Settings {
+    Some((arguments, profile))
+}
+
+fn settings_from_environment(profile: Profile) -> Settings {
+    Settings {
         profile,
         summary_lines: positive_setting(
             "LOGCUT_SUMMARY_LINES",
@@ -103,44 +121,65 @@ fn run() -> io::Result<i32> {
         ) as u64,
         log_directory: env::var_os("LOGCUT_LOG_DIRECTORY")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(format!("/tmp/logcut-{}", unsafe { getuid() }))),
-    };
+            .unwrap_or_else(|| PathBuf::from(format!("/tmp/logcut-{}", current_user_id()))),
+    }
+}
 
-    let label = command_label(&arguments);
+fn current_user_id() -> u32 {
+    // SAFETY: `getuid` takes no arguments and has no failure mode.
+    unsafe { getuid() }
+}
+
+fn run_command(arguments: &[OsString], settings: &Settings) -> io::Result<i32> {
+    let label = command_label(arguments);
     let start = Instant::now();
     println!("Running: {label}");
     let _ = io::stdout().flush();
 
-    let log_path = match prepare_log_file(&settings) {
+    let log_path = match prepare_log_file(settings) {
         Ok(path) => path,
         Err(_) => {
             eprintln!(
                 "logcut: secure logging is unavailable; running command without output suppression"
             );
-            return run_direct(&arguments);
+            return run_direct(arguments);
         }
     };
 
-    let status = match run_suppressed(&arguments, &log_path) {
+    let status = match run_suppressed(arguments, &log_path) {
         Ok(status) => status,
         Err(error) => {
             let _ = fs::remove_file(&log_path);
             eprintln!(
                 "logcut: command setup failed ({error}); running command without output suppression"
             );
-            return run_direct(&arguments);
+            return run_direct(arguments);
         }
     };
-    let elapsed = start.elapsed().as_secs();
 
+    handle_command_result(
+        status,
+        start.elapsed().as_secs(),
+        &label,
+        &log_path,
+        settings,
+    )
+}
+
+fn handle_command_result(
+    status: i32,
+    elapsed: u64,
+    label: &str,
+    log_path: &Path,
+    settings: &Settings,
+) -> io::Result<i32> {
     if status == 0 {
         println!("PASS ({elapsed}s): {label}");
-        let _ = fs::remove_file(&log_path);
+        let _ = fs::remove_file(log_path);
         return Ok(0);
     }
 
-    let raw = read_log(&log_path)?;
-    let clean = normalize_output(&raw);
+    let clean = normalize_output(read_log(log_path)?);
     let selected = if settings.profile == Profile::Auto {
         detect_profile(&clean)
     } else {

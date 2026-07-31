@@ -12,6 +12,7 @@ const SIGHUP: i32 = 1;
 const SIGINT: i32 = 2;
 const SIGKILL: i32 = 9;
 const SIGTERM: i32 = 15;
+const SIG_ERR: usize = usize::MAX;
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
@@ -25,17 +26,33 @@ extern "C" fn record_signal(signal: i32) {
     RECEIVED_SIGNAL.store(signal, Ordering::SeqCst);
 }
 
-fn install_signal_handlers() {
-    unsafe {
-        signal(SIGHUP, record_signal);
-        signal(SIGINT, record_signal);
-        signal(SIGTERM, record_signal);
+fn install_signal_handlers() -> io::Result<()> {
+    for signal_number in [SIGHUP, SIGINT, SIGTERM] {
+        // SAFETY: `record_signal` has the required C ABI and remains valid for the process lifetime.
+        if unsafe { signal(signal_number, record_signal) } == SIG_ERR {
+            return Err(io::Error::last_os_error());
+        }
     }
+    Ok(())
+}
+
+fn send_signal_to_group(process_group: i32, signal_number: i32) -> io::Result<()> {
+    // SAFETY: A negative PID targets the process group created with `setsid` below.
+    if unsafe { kill(-process_group, signal_number) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn process_group_is_alive(process_group: i32) -> bool {
+    // SAFETY: Signal 0 checks whether the process group exists without delivering a signal.
+    unsafe { kill(-process_group, 0) == 0 }
 }
 
 pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
-    install_signal_handlers();
+    install_signal_handlers()?;
     let log = OpenOptions::new().append(true).open(log_path)?;
     let stdout = Stdio::from(log.try_clone()?);
     let stderr = Stdio::from(log);
@@ -49,6 +66,8 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
         .stdout(stdout)
         .stderr(stderr);
 
+    // SAFETY: `pre_exec` runs after fork and before exec; the closure only calls async-signal-safe
+    // `setsid` and converts its failure into an `io::Error`.
     unsafe {
         command.pre_exec(|| {
             if setsid() == -1 {
@@ -84,9 +103,12 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
         if forwarded == 0 {
             let received = RECEIVED_SIGNAL.swap(0, Ordering::SeqCst);
             if received != 0 {
-                forwarded = received;
-                unsafe {
-                    kill(-process_group, received);
+                match send_signal_to_group(process_group, received) {
+                    Ok(()) => forwarded = received,
+                    Err(_) if child.try_wait()?.is_none() => {
+                        RECEIVED_SIGNAL.store(received, Ordering::SeqCst);
+                    }
+                    Err(_) => {}
                 }
             }
         }
@@ -98,15 +120,14 @@ pub(crate) fn run_suppressed(arguments: &[OsString], log_path: &Path) -> io::Res
 
     if forwarded != 0 {
         for _ in 0..50 {
-            let alive = unsafe { kill(-process_group, 0) == 0 };
-            if !alive {
+            if !process_group_is_alive(process_group) {
                 break;
             }
             thread::sleep(Duration::from_millis(20));
         }
-        if unsafe { kill(-process_group, 0) == 0 } {
-            unsafe {
-                kill(-process_group, SIGKILL);
+        if process_group_is_alive(process_group) {
+            if let Err(error) = send_signal_to_group(process_group, SIGKILL) {
+                eprintln!("logcut: failed to terminate process group: {error}");
             }
         }
         return Ok(128 + forwarded);

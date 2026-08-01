@@ -1,8 +1,12 @@
+#[path = "jest.rs"]
+mod jest;
+
 use crate::{playwright, SummarySettings};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Profile {
     Auto,
+    Jest,
     Vitest,
     Prettier,
     Eslint,
@@ -21,6 +25,7 @@ impl Profile {
     pub(crate) fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "auto" => Self::Auto,
+            "jest" => Self::Jest,
             "vitest" => Self::Vitest,
             "prettier" => Self::Prettier,
             "eslint" => Self::Eslint,
@@ -40,6 +45,7 @@ impl Profile {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
+            Self::Jest => "jest",
             Self::Vitest => "vitest",
             Self::Prettier => "prettier",
             Self::Eslint => "eslint",
@@ -60,6 +66,8 @@ pub(crate) fn detect_profile(output: &str) -> Profile {
     let lines: Vec<&str> = output.lines().collect();
     if playwright::detect(output) {
         Profile::Playwright
+    } else if jest::detect(output) {
+        Profile::Jest
     } else if lines
         .iter()
         .any(|line| line.starts_with(" FAIL  ") && line.contains(".test."))
@@ -115,6 +123,7 @@ pub(crate) fn detect_profile(output: &str) -> Profile {
 
 pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettings) -> Vec<String> {
     match profile {
+        Profile::Jest => jest::summarize(output, settings.summary_lines),
         Profile::Vitest => summarize_vitest(output),
         Profile::Prettier => filter_lines(output, settings.summary_lines, |line| {
             line.starts_with("[warn]")

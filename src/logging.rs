@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const FAILURE_LOG_TAIL_BYTES: u64 = 1024 * 1024;
-
-extern "C" {
-    fn getuid() -> u32;
-}
+const SECONDS_PER_DAY: u64 = 86_400;
 
 pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf> {
     match fs::symlink_metadata(&settings.log_directory) {
@@ -45,9 +42,8 @@ pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf
     create_unique_log(&settings.log_directory)
 }
 
-fn current_user_id() -> u32 {
-    // SAFETY: `getuid` takes no arguments and has no failure mode.
-    unsafe { getuid() }
+fn current_user_id() -> libc::uid_t {
+    unsafe { libc::getuid() }
 }
 
 fn create_unique_log(directory: &Path) -> io::Result<PathBuf> {
@@ -84,7 +80,7 @@ pub(crate) fn prune_logs(directory: &Path, max_age_days: u64, max_files: usize) 
         return;
     };
     let now = SystemTime::now();
-    let max_age = Duration::from_secs(max_age_days.saturating_add(1).saturating_mul(86_400));
+    let max_age = Duration::from_secs(max_age_days.saturating_mul(SECONDS_PER_DAY));
     let mut logs = Vec::new();
 
     for entry in entries.flatten() {

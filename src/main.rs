@@ -4,12 +4,14 @@
 compile_error!("logcut currently supports Linux only");
 
 mod logging;
+mod phpcbf;
 mod playwright;
 mod process;
 mod stylelint;
 mod summary;
 
 use logging::{normalize_output, prepare_log_file, prune_logs, read_log};
+use phpcbf::successful_nonzero_exit;
 use process::{run_direct, run_suppressed};
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -17,12 +19,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use summary::{detect_profile, successful_nonzero_exit, summarize, Profile};
-
-extern "C" {
-    fn getuid() -> u32;
-    fn umask(mask: u32) -> u32;
-}
+use summary::{detect_profile, summarize, Profile};
 
 pub(crate) struct Settings {
     pub(crate) profile: Profile,
@@ -60,9 +57,8 @@ fn run() -> io::Result<i32> {
     run_command(&arguments, &settings, original_umask)
 }
 
-fn set_private_umask() -> u32 {
-    // SAFETY: `umask` accepts any mode value, returns the previous mask, and cannot fail.
-    unsafe { umask(0o077) }
+fn set_private_umask() -> libc::mode_t {
+    unsafe { libc::umask(0o077) }
 }
 
 fn read_command_line() -> Option<(Vec<OsString>, Profile)> {
@@ -124,15 +120,14 @@ fn settings_from_environment(profile: Profile) -> Settings {
     }
 }
 
-fn current_user_id() -> u32 {
-    // SAFETY: `getuid` takes no arguments and has no failure mode.
-    unsafe { getuid() }
+fn current_user_id() -> libc::uid_t {
+    unsafe { libc::getuid() }
 }
 
 fn run_command(
     arguments: &[OsString],
     settings: &Settings,
-    original_umask: u32,
+    original_umask: libc::mode_t,
 ) -> io::Result<i32> {
     let label = command_label(arguments);
     let start = Instant::now();
@@ -197,8 +192,7 @@ fn handle_command_result(
     } else {
         settings.profile
     };
-    if successful_nonzero_exit(selected, status, &clean) && phpcbf_summary_has_no_remaining(&clean)
-    {
+    if successful_nonzero_exit(selected, status, &clean) {
         println!("PASS ({elapsed}s): {label}");
         let _ = fs::remove_file(log_path);
         return Ok(0);
@@ -227,41 +221,6 @@ fn handle_command_result(
         settings.max_log_files,
     );
     Ok(status)
-}
-
-fn phpcbf_summary_has_no_remaining(output: &str) -> bool {
-    let mut in_summary = false;
-    let mut found_file = false;
-
-    for line in output.lines() {
-        if line.contains("PHPCBF RESULT SUMMARY") {
-            in_summary = true;
-            continue;
-        }
-        if !in_summary {
-            continue;
-        }
-        if line.contains("A TOTAL OF ") {
-            break;
-        }
-
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('-') || trimmed.starts_with("FILE") {
-            continue;
-        }
-
-        let mut columns = trimmed.split_whitespace().rev();
-        let remaining = columns.next().and_then(|value| value.parse::<usize>().ok());
-        let fixed = columns.next().and_then(|value| value.parse::<usize>().ok());
-        if let (Some(remaining), Some(_fixed)) = (remaining, fixed) {
-            found_file = true;
-            if remaining != 0 {
-                return false;
-            }
-        }
-    }
-
-    found_file
 }
 
 fn limit_summary(summary: &mut Vec<String>, maximum: usize) {

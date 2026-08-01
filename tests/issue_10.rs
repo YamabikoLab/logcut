@@ -1,30 +1,18 @@
 #![cfg(target_os = "linux")]
 
-use std::fs;
-use std::path::PathBuf;
+mod common;
+
+use common::TestDir;
 use std::process::Command;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-extern "C" {
-    fn kill(pid: i32, signal: i32) -> i32;
-}
+use std::time::{Duration, Instant};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "logcut-test-{name}-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    path
+fn temp_dir(name: &str) -> TestDir {
+    TestDir::new("logcut-test", name)
 }
 
 fn combined(output: &std::process::Output) -> String {
@@ -69,8 +57,7 @@ fn ignored_forwarded_signal_is_escalated() {
 
     thread::sleep(Duration::from_millis(200));
     let start = Instant::now();
-    // SAFETY: The PID belongs to the child process spawned above.
-    assert_eq!(unsafe { kill(child.id() as i32, 15) }, 0);
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
     let status = child.wait().unwrap();
 
     assert_eq!(status.code(), Some(143));

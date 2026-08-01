@@ -1,34 +1,23 @@
 #![cfg(target_os = "linux")]
 
+mod common;
+
+use common::TestDir;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-extern "C" {
-    fn umask(mask: u32) -> u32;
-}
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "logcut-test-{name}-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    path
+fn temp_dir(name: &str) -> TestDir {
+    TestDir::new("logcut-test", name)
 }
 
-fn run_with_umask(logs: &Path, destination: &Path, mask: u32) -> Output {
+fn run_with_umask(logs: &Path, destination: &Path, mask: libc::mode_t) -> Output {
     let mut command = Command::new(binary());
     command.env("LOGCUT_LOG_DIRECTORY", logs).args([
         "sh",
@@ -38,10 +27,9 @@ fn run_with_umask(logs: &Path, destination: &Path, mask: u32) -> Output {
         destination.to_str().unwrap(),
     ]);
 
-    // SAFETY: This runs in the test child immediately before exec and only sets its umask.
     unsafe {
         command.pre_exec(move || {
-            umask(mask);
+            libc::umask(mask);
             Ok(())
         });
     }

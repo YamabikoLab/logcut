@@ -23,10 +23,10 @@
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.3` GitHub Release:
+Download both of these files from the `v0.1.4` GitHub Release:
 
 ```text
-logcut-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.4-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -34,7 +34,7 @@ Verify the archive, extract it, and install the binary for the current user:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.4-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -64,7 +64,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.3 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.4 --locked
 logcut true
 ```
 
@@ -104,6 +104,7 @@ Examples:
 
 ```bash
 logcut npm test
+logcut --profile=jest npm test
 logcut --profile=typescript npm run typecheck
 logcut --profile=playwright npm run test:e2e
 ```
@@ -122,6 +123,7 @@ When a command fails, `logcut` prints a concise summary and the path to the reta
 The default profile is `auto`. Supported profiles are:
 
 - `auto`
+- `jest`
 - `vitest`
 - `prettier`
 - `eslint`
@@ -134,6 +136,8 @@ The default profile is `auto`. Supported profiles are:
 - `composer`
 - `playwright`
 - `generic`
+
+The Jest profile shows failed test files, failed test names, relevant assertion errors, and the final Jest test summary. It is selected automatically when Jest output is detected.
 
 The profile can be selected with `--profile=PROFILE` or `LOGCUT_PROFILE`.
 

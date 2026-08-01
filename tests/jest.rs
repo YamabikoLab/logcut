@@ -1,25 +1,16 @@
 #![cfg(target_os = "linux")]
 
-use std::fs;
-use std::path::PathBuf;
+mod common;
+
+use common::TestDir;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "logcut-test-{name}-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    path
+fn temp_dir(name: &str) -> TestDir {
+    TestDir::new("logcut-test", name)
 }
 
 fn run(profile: Option<&str>, body: &str) -> std::process::Output {

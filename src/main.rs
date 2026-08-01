@@ -4,12 +4,14 @@
 compile_error!("logcut currently supports Linux only");
 
 mod logging;
+mod phpcbf;
 mod playwright;
 mod process;
 mod stylelint;
 mod summary;
 
 use logging::{normalize_output, prepare_log_file, prune_logs, read_log};
+use phpcbf::successful_nonzero_exit;
 use process::{run_direct, run_suppressed};
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -17,7 +19,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use summary::{detect_profile, successful_nonzero_exit, summarize, Profile};
+use summary::{detect_profile, summarize, Profile};
 
 pub(crate) struct Settings {
     pub(crate) profile: Profile,
@@ -111,7 +113,8 @@ fn settings_from_environment(profile: Profile) -> Settings {
             env::var("LOGCUT_LOG_MAX_AGE_DAYS").ok(),
             7,
             30,
-        ) as u64,
+        )
+        .saturating_sub(1) as u64,
         log_directory: env::var_os("LOGCUT_LOG_DIRECTORY")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(format!("/tmp/logcut-{}", current_user_id()))),

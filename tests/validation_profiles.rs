@@ -82,6 +82,20 @@ fn phpcbf_exit_one_is_accepted_when_all_errors_are_fixed() {
 }
 
 #[test]
+fn phpcbf_exit_one_keeps_failure_when_summary_has_remaining_errors() {
+    let body = "PHPCBF RESULT SUMMARY\n----------------------------------------------------------------------\nFILE                                                  FIXED  REMAINING\n----------------------------------------------------------------------\n/app/example.php                                      23     1\n----------------------------------------------------------------------\nA TOTAL OF 23 ERRORS WERE FIXED IN 1 FILE\n";
+
+    for profile in [Some("phpcbf"), None] {
+        let output = run("phpcbf-remaining-exit-one", profile, body, 1);
+        let text = combined(&output);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(text.contains("Failure summary (phpcbf)"), "{text}");
+        assert!(text.contains("A TOTAL OF 23 ERRORS WERE FIXED"), "{text}");
+    }
+}
+
+#[test]
 fn phpcbf_keeps_failure_when_errors_remain() {
     let body = "PHPCBF RESULT SUMMARY\n----------------------------------------------------------------------\nFILE                                                  FIXED  REMAINING\n----------------------------------------------------------------------\n/app/example.php                                      2      1\n----------------------------------------------------------------------\nA TOTAL OF 2 ERRORS WERE FIXED IN 1 FILE\nPHPCBF FAILED TO FIX 1 ERROR\n";
     let output = run("phpcbf-remaining", None, body, 2);

@@ -168,7 +168,9 @@ pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettin
                 || line.contains("PHP Fatal error:")
                 || line.contains("Errors parsing ")
         }),
-        Profile::Phpcs | Profile::Phpcbf => summarize_php_codesniffer(output, settings.summary_lines),
+        Profile::Phpcs | Profile::Phpcbf => {
+            summarize_php_codesniffer(output, settings.summary_lines)
+        }
         Profile::Contract => capture_from(
             output,
             settings.summary_lines,

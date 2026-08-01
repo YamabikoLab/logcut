@@ -1,27 +1,19 @@
 #![cfg(target_os = "linux")]
 
+mod common;
+
+use common::TestDir;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "logcut-test-{name}-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    path
+fn temp_dir(name: &str) -> TestDir {
+    TestDir::new("logcut-test", name)
 }
 
 fn run(name: &str, profile: Option<&str>, script: &str) -> std::process::Output {
@@ -153,56 +145,16 @@ fn invalid_numeric_settings_use_defaults() {
 #[test]
 fn all_profiles_extract_expected_failure() {
     let fixtures = [
-        (
-            "vitest",
-            " FAIL  tests/a.test.ts\nAssertionError: vitest boom\n⎯\n",
-            "vitest boom",
-        ),
-        (
-            "prettier",
-            "[warn] src/a.ts\nCode style issues found\n",
-            "[warn] src/a.ts",
-        ),
-        (
-            "eslint",
-            "src/a.ts\n  1:2  error  eslint boom  rule\n✖ 1 problem\n",
-            "eslint boom",
-        ),
-        (
-            "typescript",
-            "src/a.ts(1,2): error TS1234: typescript boom\n",
-            "typescript boom",
-        ),
-        (
-            "phpunit",
-            "PHPUnit 12.0\nThere was 1 failure:\n1) A::b\nphpunit boom\nTests: 1\n",
-            "phpunit boom",
-        ),
-        (
-            "phpstan",
-            "phpstan boom\n [ERROR] Found 1 error\n",
-            "phpstan boom",
-        ),
-        (
-            "php-lint",
-            "PHP Parse error: boom\nErrors parsing a.php\n",
-            "PHP Parse error",
-        ),
-        (
-            "contract",
-            "Contract check failed:\ncontract boom\n",
-            "contract boom",
-        ),
-        (
-            "vite",
-            "error during build:\nRollupError: vite boom\n",
-            "vite boom",
-        ),
-        (
-            "composer",
-            "Script test returned with error code 1\ncomposer boom\n",
-            "returned with error code",
-        ),
+        ("vitest", " FAIL  tests/a.test.ts\nAssertionError: vitest boom\n⎯\n", "vitest boom"),
+        ("prettier", "[warn] src/a.ts\nCode style issues found\n", "[warn] src/a.ts"),
+        ("eslint", "src/a.ts\n  1:2  error  eslint boom  rule\n✖ 1 problem\n", "eslint boom"),
+        ("typescript", "src/a.ts(1,2): error TS1234: typescript boom\n", "typescript boom"),
+        ("phpunit", "PHPUnit 12.0\nThere was 1 failure:\n1) A::b\nphpunit boom\nTests: 1\n", "phpunit boom"),
+        ("phpstan", "phpstan boom\n [ERROR] Found 1 error\n", "phpstan boom"),
+        ("php-lint", "PHP Parse error: boom\nErrors parsing a.php\n", "PHP Parse error"),
+        ("contract", "Contract check failed:\ncontract boom\n", "contract boom"),
+        ("vite", "error during build:\nRollupError: vite boom\n", "vite boom"),
+        ("composer", "Script test returned with error code 1\ncomposer boom\n", "returned with error code"),
         ("generic", "generic boom\n", "generic boom"),
     ];
 
@@ -218,10 +170,7 @@ fn all_profiles_extract_expected_failure() {
         );
         let text = combined(&output);
         assert_eq!(output.status.code(), Some(1), "profile {profile}");
-        assert!(
-            text.contains(&format!("Failure summary ({profile})")),
-            "{text}"
-        );
+        assert!(text.contains(&format!("Failure summary ({profile})")), "{text}");
         assert!(text.contains(expected), "profile {profile}: {text}");
     }
 }

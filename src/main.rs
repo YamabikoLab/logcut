@@ -196,8 +196,7 @@ fn handle_command_result(
     } else {
         settings.profile
     };
-    if successful_nonzero_exit(selected, status, &clean)
-        && phpcbf_summary_has_no_remaining(&clean)
+    if successful_nonzero_exit(selected, status, &clean) && phpcbf_summary_has_no_remaining(&clean)
     {
         println!("PASS ({elapsed}s): {label}");
         let _ = fs::remove_file(log_path);

@@ -6,6 +6,7 @@ compile_error!("logcut currently supports Linux only");
 mod logging;
 mod playwright;
 mod process;
+mod stylelint;
 mod summary;
 
 use logging::{normalize_output, prepare_log_file, prune_logs, read_log};

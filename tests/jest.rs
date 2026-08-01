@@ -22,8 +22,7 @@ fn temp_dir(name: &str) -> PathBuf {
     path
 }
 
-fn run(profile: Option<&str>) -> std::process::Output {
-    let body = "FAIL tests/math.test.ts\n  calculator\n    ✕ adds values (4 ms)\n\n  ● calculator › adds values\n\n    Expected: 4\n    Received: 5\n\nTest Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 5 passed, 6 total\nSnapshots:   0 total\nTime:        1.234 s\nRan all test suites.\n";
+fn run(profile: Option<&str>, body: &str) -> std::process::Output {
     let escaped = body
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
@@ -50,17 +49,40 @@ fn combined(output: &std::process::Output) -> String {
 
 #[test]
 fn jest_profile_and_auto_detection_show_concise_failures() {
+    let body = " FAIL  ./tests/math.test.ts\n  calculator\n    ✕ adds values (4 ms)\n\n  ● calculator › adds values\n\n    Expected: 4\n    Received: 5\n\nTest Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 5 passed, 6 total\nSnapshots:   0 total\nTime:        1.234 s\nRan all test suites.\n";
+
     for profile in [Some("jest"), None] {
-        let output = run(profile);
+        let output = run(profile, body);
         let text = combined(&output);
 
         assert_eq!(output.status.code(), Some(1));
         assert!(text.contains("Failure summary (jest)"));
-        assert!(text.contains("FAIL tests/math.test.ts"));
+        assert!(text.contains(" FAIL  ./tests/math.test.ts"));
         assert!(text.contains("● calculator › adds values"));
         assert!(text.contains("Expected: 4"));
         assert!(text.contains("Received: 5"));
         assert!(text.contains("Test Suites: 1 failed, 2 passed, 3 total"));
         assert!(text.contains("Tests:       1 failed, 5 passed, 6 total"));
+    }
+}
+
+#[test]
+fn jest_runtime_errors_are_included_in_summary() {
+    for cause in [
+        "TypeError: Cannot read properties of undefined",
+        "ReferenceError: value is not defined",
+        "SyntaxError: Cannot use import statement outside a module",
+        "Cannot find module 'missing-package'",
+    ] {
+        let body = format!(
+            " FAIL  ./tests/setup.test.ts\n\n  ● Test suite failed to run\n\n    {cause}\n\nTest Suites: 1 failed, 1 total\nTests:       0 total\nSnapshots:   0 total\nTime:        0.123 s\nRan all test suites.\n"
+        );
+        let output = run(None, &body);
+        let text = combined(&output);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(text.contains("Failure summary (jest)"));
+        assert!(text.contains("● Test suite failed to run"));
+        assert!(text.contains(cause));
     }
 }

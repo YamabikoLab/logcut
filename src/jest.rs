@@ -47,8 +47,7 @@ fn push_unique(result: &mut Vec<String>, line: String, maximum: usize) {
 }
 
 fn is_failure_file(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("FAIL ") && !trimmed.starts_with("FAIL  ")
+    line.trim_start().starts_with("FAIL ")
 }
 
 fn is_failed_test(line: &str) -> bool {
@@ -57,11 +56,21 @@ fn is_failed_test(line: &str) -> bool {
 
 fn is_relevant_error(line: &str) -> bool {
     let trimmed = line.trim_start();
-    trimmed.starts_with("Error:")
-        || trimmed.starts_with("AssertionError:")
+    is_error_line(trimmed)
+        || trimmed.starts_with("Cannot find module ")
         || trimmed.starts_with("Expected:")
         || trimmed.starts_with("Received:")
         || trimmed.starts_with("Matcher error:")
+}
+
+fn is_error_line(line: &str) -> bool {
+    line.split_once(':').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && name.ends_with("Error")
+            && name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+    })
 }
 
 fn is_final_summary(line: &str) -> bool {

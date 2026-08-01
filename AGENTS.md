@@ -28,6 +28,13 @@ More specific `AGENTS.md` files add only directory-specific guidance.
 - Do not commit generated artifacts, retained logs, or local credentials.
 - Update documentation only when user-facing behavior or commands change.
 
+## Release Versioning
+
+- For each Issue implementation, increment the patch version unless another version is explicitly specified.
+- Keep version references aligned in `Cargo.toml`, `Cargo.lock`, `README.md`, and `.github/workflows/release.yml`.
+- Add `.github/release-notes/vX.Y.Z.md` for the new version.
+- Briefly describe the changes and compatibility impact in the release notes.
+
 ## Change Discipline
 
 - Avoid unrelated cleanup while implementing a focused task.

@@ -69,7 +69,7 @@ fn is_stylesheet_heading(line: &str) -> bool {
 }
 
 fn is_problem_line(line: &str) -> bool {
-    let mut parts = line.trim_start().split_whitespace();
+    let mut parts = line.split_whitespace();
     let Some(position) = parts.next() else {
         return false;
     };

@@ -1,7 +1,12 @@
 use crate::summary::Profile;
 
 pub(crate) fn successful_nonzero_exit(profile: Profile, status: i32, output: &str) -> bool {
-    crate::summary::successful_nonzero_exit(profile, status, output)
+    profile == Profile::Phpcbf
+        && status == 1
+        && output.contains("PHPCBF RESULT SUMMARY")
+        && output.contains("A TOTAL OF ")
+        && output.contains("ERRORS WERE FIXED")
+        && !output.contains("FAILED TO FIX")
         && summary_has_no_remaining_errors(output)
 }
 

@@ -145,16 +145,56 @@ fn invalid_numeric_settings_use_defaults() {
 #[test]
 fn all_profiles_extract_expected_failure() {
     let fixtures = [
-        ("vitest", " FAIL  tests/a.test.ts\nAssertionError: vitest boom\n⎯\n", "vitest boom"),
-        ("prettier", "[warn] src/a.ts\nCode style issues found\n", "[warn] src/a.ts"),
-        ("eslint", "src/a.ts\n  1:2  error  eslint boom  rule\n✖ 1 problem\n", "eslint boom"),
-        ("typescript", "src/a.ts(1,2): error TS1234: typescript boom\n", "typescript boom"),
-        ("phpunit", "PHPUnit 12.0\nThere was 1 failure:\n1) A::b\nphpunit boom\nTests: 1\n", "phpunit boom"),
-        ("phpstan", "phpstan boom\n [ERROR] Found 1 error\n", "phpstan boom"),
-        ("php-lint", "PHP Parse error: boom\nErrors parsing a.php\n", "PHP Parse error"),
-        ("contract", "Contract check failed:\ncontract boom\n", "contract boom"),
-        ("vite", "error during build:\nRollupError: vite boom\n", "vite boom"),
-        ("composer", "Script test returned with error code 1\ncomposer boom\n", "returned with error code"),
+        (
+            "vitest",
+            " FAIL  tests/a.test.ts\nAssertionError: vitest boom\n⎯\n",
+            "vitest boom",
+        ),
+        (
+            "prettier",
+            "[warn] src/a.ts\nCode style issues found\n",
+            "[warn] src/a.ts",
+        ),
+        (
+            "eslint",
+            "src/a.ts\n  1:2  error  eslint boom  rule\n✖ 1 problem\n",
+            "eslint boom",
+        ),
+        (
+            "typescript",
+            "src/a.ts(1,2): error TS1234: typescript boom\n",
+            "typescript boom",
+        ),
+        (
+            "phpunit",
+            "PHPUnit 12.0\nThere was 1 failure:\n1) A::b\nphpunit boom\nTests: 1\n",
+            "phpunit boom",
+        ),
+        (
+            "phpstan",
+            "phpstan boom\n [ERROR] Found 1 error\n",
+            "phpstan boom",
+        ),
+        (
+            "php-lint",
+            "PHP Parse error: boom\nErrors parsing a.php\n",
+            "PHP Parse error",
+        ),
+        (
+            "contract",
+            "Contract check failed:\ncontract boom\n",
+            "contract boom",
+        ),
+        (
+            "vite",
+            "error during build:\nRollupError: vite boom\n",
+            "vite boom",
+        ),
+        (
+            "composer",
+            "Script test returned with error code 1\ncomposer boom\n",
+            "returned with error code",
+        ),
         ("generic", "generic boom\n", "generic boom"),
     ];
 
@@ -170,7 +210,10 @@ fn all_profiles_extract_expected_failure() {
         );
         let text = combined(&output);
         assert_eq!(output.status.code(), Some(1), "profile {profile}");
-        assert!(text.contains(&format!("Failure summary ({profile})")), "{text}");
+        assert!(
+            text.contains(&format!("Failure summary ({profile})")),
+            "{text}"
+        );
         assert!(text.contains(expected), "profile {profile}: {text}");
     }
 }

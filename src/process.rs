@@ -199,10 +199,7 @@ pub(crate) fn run_suppressed(
         .unwrap_or_else(|| 128 + exit_status.signal().unwrap_or(1)))
 }
 
-pub(crate) fn run_direct(
-    arguments: &[OsString],
-    original_umask: libc::mode_t,
-) -> io::Result<i32> {
+pub(crate) fn run_direct(arguments: &[OsString], original_umask: libc::mode_t) -> io::Result<i32> {
     unsafe {
         libc::umask(original_umask);
     }

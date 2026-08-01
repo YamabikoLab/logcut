@@ -49,9 +49,9 @@ fn removes_unsafe_control_characters_but_preserves_lines_and_tabs() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(text.contains("alphabeta\tgamma"), "{text:?}");
-    assert!(!text.chars().any(|character| {
-        character.is_control() && character != '\n' && character != '\t'
-    }));
+    assert!(!text
+        .chars()
+        .any(|character| { character.is_control() && character != '\n' && character != '\t' }));
 }
 
 #[test]

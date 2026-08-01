@@ -165,9 +165,7 @@ pub(crate) fn normalize_output(mut input: Vec<u8>) -> String {
         Ok(output) => output,
         Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
     };
-    output.retain(|character| {
-        character == '\n' || character == '\t' || !character.is_control()
-    });
+    output.retain(|character| character == '\n' || character == '\t' || !character.is_control());
     output
 }
 

@@ -31,7 +31,7 @@ impl SignalHandlers {
             let mut action: libc::sigaction = unsafe { mem::zeroed() };
             let mut old_action: libc::sigaction = unsafe { mem::zeroed() };
             action.sa_sigaction = record_signal as *const () as usize;
-            action.sa_flags = 0;
+            action.sa_flags = libc::SA_RESTART;
 
             if unsafe { libc::sigemptyset(&mut action.sa_mask) } == -1
                 || unsafe { libc::sigaction(signal_number, &action, &mut old_action) } == -1

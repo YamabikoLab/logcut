@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use summary::{detect_profile, summarize, Profile};
+use summary::{detect_profile, successful_nonzero_exit, summarize, Profile};
 
 extern "C" {
     fn getuid() -> u32;
@@ -196,6 +196,12 @@ fn handle_command_result(
     } else {
         settings.profile
     };
+    if successful_nonzero_exit(selected, status, &clean) {
+        println!("PASS ({elapsed}s): {label}");
+        let _ = fs::remove_file(log_path);
+        return Ok(0);
+    }
+
     let summary_settings = SummarySettings {
         summary_lines: settings.summary_lines,
         max_errors: settings.max_errors,

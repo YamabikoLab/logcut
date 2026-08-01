@@ -68,3 +68,17 @@ fn removes_supported_terminal_escape_sequences() {
     assert!(!text.contains("private-data"));
     assert!(!text.contains('\u{1b}'));
 }
+
+#[test]
+fn does_not_treat_bel_as_a_dcs_terminator() {
+    let output = run(
+        "dcs-bel",
+        r"printf 'before\033Psecret\007leaked\033\\after\n'; exit 1",
+    );
+    let text = combined(&output);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text.contains("beforeafter"), "{text:?}");
+    assert!(!text.contains("secret"));
+    assert!(!text.contains("leaked"));
+}

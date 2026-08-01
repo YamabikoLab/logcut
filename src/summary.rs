@@ -1,7 +1,7 @@
 #[path = "jest.rs"]
 mod jest;
 
-use crate::{playwright, SummarySettings};
+use crate::{playwright, stylelint, SummarySettings};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Profile {
@@ -10,6 +10,7 @@ pub(crate) enum Profile {
     Vitest,
     Prettier,
     Eslint,
+    Stylelint,
     Typescript,
     Phpunit,
     Phpstan,
@@ -32,6 +33,7 @@ impl Profile {
             "vitest" => Self::Vitest,
             "prettier" => Self::Prettier,
             "eslint" => Self::Eslint,
+            "stylelint" => Self::Stylelint,
             "typescript" => Self::Typescript,
             "phpunit" => Self::Phpunit,
             "phpstan" => Self::Phpstan,
@@ -55,6 +57,7 @@ impl Profile {
             Self::Vitest => "vitest",
             Self::Prettier => "prettier",
             Self::Eslint => "eslint",
+            Self::Stylelint => "stylelint",
             Self::Typescript => "typescript",
             Self::Phpunit => "phpunit",
             Self::Phpstan => "phpstan",
@@ -95,6 +98,8 @@ pub(crate) fn detect_profile(output: &str) -> Profile {
         Profile::Vitest
     } else if output.lines().any(contains_typescript_error) {
         Profile::Typescript
+    } else if stylelint::detect(output) {
+        Profile::Stylelint
     } else if output.lines().any(is_eslint_error) {
         Profile::Eslint
     } else if output
@@ -160,6 +165,7 @@ pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettin
                 || line.contains("Forgot to run Prettier")
         }),
         Profile::Eslint => summarize_eslint(output, settings.max_errors),
+        Profile::Stylelint => stylelint::summarize(output, settings.max_errors),
         Profile::Typescript => summarize_typescript(output, settings.max_errors),
         Profile::Phpunit => summarize_phpunit(output, settings.summary_lines),
         Profile::Phpstan => summarize_phpstan(output, settings.summary_lines),

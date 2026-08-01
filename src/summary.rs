@@ -14,8 +14,11 @@ pub(crate) enum Profile {
     Phpunit,
     Phpstan,
     PhpLint,
+    Phpcs,
+    Phpcbf,
     Contract,
     Vite,
+    Webpack,
     Composer,
     Playwright,
     Generic,
@@ -33,8 +36,11 @@ impl Profile {
             "phpunit" => Self::Phpunit,
             "phpstan" => Self::Phpstan,
             "php-lint" => Self::PhpLint,
+            "phpcs" => Self::Phpcs,
+            "phpcbf" => Self::Phpcbf,
             "contract" => Self::Contract,
             "vite" => Self::Vite,
+            "webpack" => Self::Webpack,
             "composer" => Self::Composer,
             "playwright" => Self::Playwright,
             "generic" => Self::Generic,
@@ -53,8 +59,11 @@ impl Profile {
             Self::Phpunit => "phpunit",
             Self::Phpstan => "phpstan",
             Self::PhpLint => "php-lint",
+            Self::Phpcs => "phpcs",
+            Self::Phpcbf => "phpcbf",
             Self::Contract => "contract",
             Self::Vite => "vite",
+            Self::Webpack => "webpack",
             Self::Composer => "composer",
             Self::Playwright => "playwright",
             Self::Generic => "generic",
@@ -68,6 +77,17 @@ pub(crate) fn detect_profile(output: &str) -> Profile {
         Profile::Playwright
     } else if jest::detect(output) {
         Profile::Jest
+    } else if output.contains("PHPCBF RESULT SUMMARY") {
+        Profile::Phpcbf
+    } else if output.contains("PHPCS REPORT SUMMARY")
+        || output.contains("FILE: ") && output.contains("FOUND ") && output.contains("ERROR")
+    {
+        Profile::Phpcs
+    } else if output.contains("webpack compiled with ")
+        || output.contains("Module build failed")
+        || output.contains("Module parse failed")
+    {
+        Profile::Webpack
     } else if lines
         .iter()
         .any(|line| line.starts_with(" FAIL  ") && line.contains(".test."))
@@ -121,6 +141,15 @@ pub(crate) fn detect_profile(output: &str) -> Profile {
     }
 }
 
+pub(crate) fn successful_nonzero_exit(profile: Profile, status: i32, output: &str) -> bool {
+    profile == Profile::Phpcbf
+        && status == 1
+        && output.contains("PHPCBF RESULT SUMMARY")
+        && output.contains("A TOTAL OF ")
+        && output.contains("ERRORS WERE FIXED")
+        && !output.contains("FAILED TO FIX")
+}
+
 pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettings) -> Vec<String> {
     match profile {
         Profile::Jest => jest::summarize(output, settings.summary_lines),
@@ -139,6 +168,7 @@ pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettin
                 || line.contains("PHP Fatal error:")
                 || line.contains("Errors parsing ")
         }),
+        Profile::Phpcs | Profile::Phpcbf => summarize_php_codesniffer(output, settings.summary_lines),
         Profile::Contract => capture_from(
             output,
             settings.summary_lines,
@@ -156,10 +186,64 @@ pub(crate) fn summarize(profile: Profile, output: &str, settings: &SummarySettin
             },
             "[additional build output omitted]",
         ),
+        Profile::Webpack => summarize_webpack(output, settings.summary_lines),
         Profile::Composer => summarize_composer(output, settings.summary_lines),
         Profile::Playwright => playwright::summarize(output, settings.summary_lines),
         Profile::Auto | Profile::Generic => tail_lines(output, settings.summary_lines),
     }
+}
+
+fn summarize_php_codesniffer(output: &str, maximum: usize) -> Vec<String> {
+    let lines: Vec<&str> = output.lines().collect();
+    let mut result = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if line.starts_with("FILE: ") {
+            result.push((*line).to_string());
+            for detail in lines.iter().skip(index + 1) {
+                if detail.starts_with("FILE: ") || detail.contains("RESULT SUMMARY") {
+                    break;
+                }
+                if !detail.trim().is_empty()
+                    && (detail.contains("ERROR")
+                        || detail.contains("WARNING")
+                        || detail.contains("FOUND "))
+                {
+                    result.push((*detail).to_string());
+                }
+                if result.len() >= maximum {
+                    return result;
+                }
+            }
+        }
+    }
+    for line in lines.iter().filter(|line| {
+        line.contains("A TOTAL OF ")
+            || line.contains("FOUND ")
+            || line.contains("ERRORS WERE FIXED")
+            || line.contains("FAILED TO FIX")
+    }) {
+        if result.len() >= maximum {
+            break;
+        }
+        if !result.iter().any(|value| value == line) {
+            result.push((*line).to_string());
+        }
+    }
+    result
+}
+
+fn summarize_webpack(output: &str, maximum: usize) -> Vec<String> {
+    capture_from(
+        output,
+        maximum,
+        |line| {
+            line.starts_with("ERROR in ")
+                || line.contains("Module build failed")
+                || line.contains("Module parse failed")
+                || line.contains("webpack compiled with ")
+        },
+        "[additional webpack output omitted]",
+    )
 }
 
 fn summarize_vitest(output: &str) -> Vec<String> {

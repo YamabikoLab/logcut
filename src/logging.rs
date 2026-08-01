@@ -145,31 +145,13 @@ pub(crate) fn normalize_output(mut input: Vec<u8>) -> String {
 
     while read_index < input.len() {
         match input[read_index] {
-            b'\r' => read_index += 1,
-            0x1b if input.get(read_index + 1) == Some(&b'[') => {
-                read_index += 2;
-                while read_index < input.len() {
-                    let byte = input[read_index];
-                    read_index += 1;
-                    if (0x40..=0x7e).contains(&byte) {
-                        break;
-                    }
-                }
+            0x1b => read_index = skip_escape_sequence(&input, read_index),
+            b'\n' | b'\t' => {
+                input[write_index] = input[read_index];
+                write_index += 1;
+                read_index += 1;
             }
-            0x1b if input.get(read_index + 1) == Some(&b']') => {
-                read_index += 2;
-                while read_index < input.len() {
-                    if input[read_index] == 0x07 {
-                        read_index += 1;
-                        break;
-                    }
-                    if input[read_index] == 0x1b && input.get(read_index + 1) == Some(&b'\\') {
-                        read_index += 2;
-                        break;
-                    }
-                    read_index += 1;
-                }
-            }
+            byte if byte < 0x20 || byte == 0x7f => read_index += 1,
             byte => {
                 input[write_index] = byte;
                 write_index += 1;
@@ -179,8 +161,62 @@ pub(crate) fn normalize_output(mut input: Vec<u8>) -> String {
     }
 
     input.truncate(write_index);
-    match String::from_utf8(input) {
+    let mut output = match String::from_utf8(input) {
         Ok(output) => output,
         Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    };
+    output.retain(|character| character == '\n' || character == '\t' || !character.is_control());
+    output
+}
+
+fn skip_escape_sequence(input: &[u8], start: usize) -> usize {
+    let Some(next) = input.get(start + 1) else {
+        return start + 1;
+    };
+
+    match next {
+        b'[' => skip_control_sequence(input, start + 2),
+        b']' => skip_string_sequence(input, start + 2, true),
+        b'P' | b'X' | b'^' | b'_' => skip_string_sequence(input, start + 2, false),
+        _ => {
+            let mut index = start + 1;
+            while input
+                .get(index)
+                .is_some_and(|byte| (0x20..=0x2f).contains(byte))
+            {
+                index += 1;
+            }
+            if input
+                .get(index)
+                .is_some_and(|byte| (0x30..=0x7e).contains(byte))
+            {
+                index + 1
+            } else {
+                index
+            }
+        }
     }
+}
+
+fn skip_control_sequence(input: &[u8], mut index: usize) -> usize {
+    while let Some(byte) = input.get(index) {
+        index += 1;
+        if (0x40..=0x7e).contains(byte) {
+            break;
+        }
+    }
+    index
+}
+
+fn skip_string_sequence(input: &[u8], mut index: usize, allow_bel_terminator: bool) -> usize {
+    while index < input.len() {
+        if allow_bel_terminator && input[index] == 0x07 {
+            return index + 1;
+        }
+        if input[index] == 0x1b && input.get(index + 1) == Some(&b'\\') {
+            return index + 2;
+        }
+        index += 1;
+    }
+    index
 }

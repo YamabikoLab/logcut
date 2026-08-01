@@ -176,7 +176,8 @@ fn skip_escape_sequence(input: &[u8], start: usize) -> usize {
 
     match next {
         b'[' => skip_control_sequence(input, start + 2),
-        b']' | b'P' | b'X' | b'^' | b'_' => skip_string_sequence(input, start + 2),
+        b']' => skip_string_sequence(input, start + 2, true),
+        b'P' | b'X' | b'^' | b'_' => skip_string_sequence(input, start + 2, false),
         _ => {
             let mut index = start + 1;
             while input
@@ -207,9 +208,9 @@ fn skip_control_sequence(input: &[u8], mut index: usize) -> usize {
     index
 }
 
-fn skip_string_sequence(input: &[u8], mut index: usize) -> usize {
+fn skip_string_sequence(input: &[u8], mut index: usize, allow_bel_terminator: bool) -> usize {
     while index < input.len() {
-        if input[index] == 0x07 {
+        if allow_bel_terminator && input[index] == 0x07 {
             return index + 1;
         }
         if input[index] == 0x1b && input.get(index + 1) == Some(&b'\\') {

@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use summary::{detect_profile, summarize, Profile};
+use summary::{detect_profile, successful_nonzero_exit, summarize, Profile};
 
 extern "C" {
     fn getuid() -> u32;
@@ -196,6 +196,13 @@ fn handle_command_result(
     } else {
         settings.profile
     };
+    if successful_nonzero_exit(selected, status, &clean) && phpcbf_summary_has_no_remaining(&clean)
+    {
+        println!("PASS ({elapsed}s): {label}");
+        let _ = fs::remove_file(log_path);
+        return Ok(0);
+    }
+
     let summary_settings = SummarySettings {
         summary_lines: settings.summary_lines,
         max_errors: settings.max_errors,
@@ -219,6 +226,41 @@ fn handle_command_result(
         settings.max_log_files,
     );
     Ok(status)
+}
+
+fn phpcbf_summary_has_no_remaining(output: &str) -> bool {
+    let mut in_summary = false;
+    let mut found_file = false;
+
+    for line in output.lines() {
+        if line.contains("PHPCBF RESULT SUMMARY") {
+            in_summary = true;
+            continue;
+        }
+        if !in_summary {
+            continue;
+        }
+        if line.contains("A TOTAL OF ") {
+            break;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('-') || trimmed.starts_with("FILE") {
+            continue;
+        }
+
+        let mut columns = trimmed.split_whitespace().rev();
+        let remaining = columns.next().and_then(|value| value.parse::<usize>().ok());
+        let fixed = columns.next().and_then(|value| value.parse::<usize>().ok());
+        if let (Some(remaining), Some(_fixed)) = (remaining, fixed) {
+            found_file = true;
+            if remaining != 0 {
+                return false;
+            }
+        }
+    }
+
+    found_file
 }
 
 fn limit_summary(summary: &mut Vec<String>, maximum: usize) {

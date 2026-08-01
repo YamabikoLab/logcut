@@ -9,7 +9,7 @@
 - Shows a profile-specific failure summary when the command fails.
 - Falls back to the tail of the log when no profile-specific summary is available.
 - Keeps the full log on failure and removes it on success.
-- Returns the original command exit code.
+- Returns the original command exit code, except for a successful PHPCBF repair reported with exit code `1`.
 - Forwards stdin to the child command.
 - Forwards `HUP`, `INT`, and `TERM` to the child process group.
 - Runs the child command with the caller's original umask.
@@ -23,10 +23,10 @@
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.4` GitHub Release:
+Download both of these files from the `v0.1.5` GitHub Release:
 
 ```text
-logcut-v0.1.4-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.5-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -34,7 +34,7 @@ Verify the archive, extract it, and install the binary for the current user:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.4-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.5-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -64,7 +64,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.4 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.5 --locked
 logcut true
 ```
 
@@ -105,7 +105,8 @@ Examples:
 ```bash
 logcut npm test
 logcut --profile=jest npm test
-logcut --profile=typescript npm run typecheck
+logcut --profile=phpcs composer lint:php
+logcut --profile=webpack npm run build
 logcut --profile=playwright npm run test:e2e
 ```
 
@@ -131,13 +132,16 @@ The default profile is `auto`. Supported profiles are:
 - `phpunit`
 - `phpstan`
 - `php-lint`
+- `phpcs`
+- `phpcbf`
 - `contract`
 - `vite`
+- `webpack`
 - `composer`
 - `playwright`
 - `generic`
 
-The Jest profile shows failed test files, failed test names, relevant assertion errors, and the final Jest test summary. It is selected automatically when Jest output is detected.
+PHPCS, PHPCBF, and webpack output from `wp-scripts build` are detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
 
 The profile can be selected with `--profile=PROFILE` or `LOGCUT_PROFILE`.
 

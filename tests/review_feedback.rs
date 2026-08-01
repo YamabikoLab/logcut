@@ -1,35 +1,21 @@
 #![cfg(target_os = "linux")]
 
+mod common;
+
+use common::TestDir;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-const SIGHUP: i32 = 1;
-const SIGINT: i32 = 2;
-const SIGTERM: i32 = 15;
-
-extern "C" {
-    fn kill(pid: i32, signal: i32) -> i32;
-}
+use std::time::Duration;
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "logcut-review-{name}-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    path
+fn temp_dir(name: &str) -> TestDir {
+    TestDir::new("logcut-review", name)
 }
 
 fn combined(output: &std::process::Output) -> String {
@@ -51,7 +37,10 @@ fn run(name: &str, profile: Option<&str>, body: &str) -> std::process::Output {
 }
 
 fn process_exists(pid: i32) -> bool {
-    unsafe { kill(pid, 0) == 0 }
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 fn wait_for_file(path: &Path) {
@@ -193,9 +182,9 @@ fn retained_logs_are_pruned_to_configured_count() {
 #[test]
 fn hup_int_and_term_are_forwarded_and_process_group_is_cleaned_up() {
     for (name, signal, expected) in [
-        ("HUP", SIGHUP, 129),
-        ("INT", SIGINT, 130),
-        ("TERM", SIGTERM, 143),
+        ("HUP", libc::SIGHUP, 129),
+        ("INT", libc::SIGINT, 130),
+        ("TERM", libc::SIGTERM, 143),
     ] {
         let root = temp_dir(&format!("signal-{name}"));
         let child_file = root.join("child");
@@ -218,7 +207,7 @@ fn hup_int_and_term_are_forwarded_and_process_group_is_cleaned_up() {
         wait_for_file(&child_file);
         wait_for_file(&grandchild_file);
         unsafe {
-            assert_eq!(kill(child.id() as i32, signal), 0);
+            assert_eq!(libc::kill(child.id() as i32, signal), 0);
         }
         let output = child.wait_with_output().unwrap();
         let text = combined(&output);

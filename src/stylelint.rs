@@ -81,16 +81,14 @@ fn is_problem_line(line: &str) -> bool {
 }
 
 fn is_position(value: &str) -> bool {
-    value
-        .split_once(':')
-        .is_some_and(|(line_number, column)| {
-            !line_number.is_empty()
-                && !column.is_empty()
-                && line_number
-                    .chars()
-                    .all(|character| character.is_ascii_digit())
-                && column.chars().all(|character| character.is_ascii_digit())
-        })
+    value.split_once(':').is_some_and(|(line_number, column)| {
+        !line_number.is_empty()
+            && !column.is_empty()
+            && line_number
+                .chars()
+                .all(|character| character.is_ascii_digit())
+            && column.chars().all(|character| character.is_ascii_digit())
+    })
 }
 
 fn is_summary_line(line: &str) -> bool {

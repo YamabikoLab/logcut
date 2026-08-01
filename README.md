@@ -23,10 +23,10 @@
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.6` GitHub Release:
+Download both of these files from the `v0.1.7` GitHub Release:
 
 ```text
-logcut-v0.1.6-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.7-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -34,7 +34,7 @@ Verify the archive, extract it, and install the binary for the current user:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.6-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.7-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -64,7 +64,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.6 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.7 --locked
 logcut true
 ```
 
@@ -105,6 +105,7 @@ Examples:
 ```bash
 logcut npm test
 logcut --profile=jest npm test
+logcut --profile=stylelint npm run lint:css
 logcut --profile=phpcs composer lint:php
 logcut --profile=webpack npm run build
 logcut --profile=playwright npm run test:e2e
@@ -128,6 +129,7 @@ The default profile is `auto`. Supported profiles are:
 - `vitest`
 - `prettier`
 - `eslint`
+- `stylelint`
 - `typescript`
 - `phpunit`
 - `phpstan`
@@ -141,7 +143,7 @@ The default profile is `auto`. Supported profiles are:
 - `playwright`
 - `generic`
 
-PHPCS, PHPCBF, and webpack output from `wp-scripts build` are detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
+Stylelint output for CSS, SCSS, Sass, and Less files is detected automatically, including failures left after `lint-style --fix`. PHPCS, PHPCBF, and webpack output from `wp-scripts build` are also detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
 
 The profile can be selected with `--profile=PROFILE` or `LOGCUT_PROFILE`.
 

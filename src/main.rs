@@ -250,7 +250,7 @@ fn phpcbf_summary_has_no_remaining(output: &str) -> bool {
             continue;
         }
 
-        let mut columns = trimmed.rsplit_whitespace();
+        let mut columns = trimmed.split_whitespace().rev();
         let remaining = columns.next().and_then(|value| value.parse::<usize>().ok());
         let fixed = columns.next().and_then(|value| value.parse::<usize>().ok());
         if let (Some(remaining), Some(_fixed)) = (remaining, fixed) {

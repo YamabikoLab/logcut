@@ -14,8 +14,9 @@ fn temp_dir(name: &str) -> TestDir {
 }
 
 fn run(name: &str, script: &str) -> std::process::Output {
+    let root = temp_dir(name);
     Command::new(binary())
-        .env("LOGCUT_LOG_DIRECTORY", temp_dir(name).join("logs"))
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
         .arg("--profile=generic")
         .args(["sh", "-c", script])
         .output()

@@ -113,8 +113,7 @@ fn settings_from_environment(profile: Profile) -> Settings {
             env::var("LOGCUT_LOG_MAX_AGE_DAYS").ok(),
             7,
             30,
-        )
-        .saturating_sub(1) as u64,
+        ) as u64,
         log_directory: env::var_os("LOGCUT_LOG_DIRECTORY")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(format!("/tmp/logcut-{}", current_user_id()))),

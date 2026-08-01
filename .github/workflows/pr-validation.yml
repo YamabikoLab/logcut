@@ -29,3 +29,16 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --locked
+
+  minimum-rust:
+    name: Rust 1.70 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.70
+        uses: dtolnay/rust-toolchain@1.70.0
+
+      - name: Check minimum Rust version
+        run: cargo check --all-targets --all-features --locked

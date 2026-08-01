@@ -1,6 +1,8 @@
+use libc::{c_int, pid_t};
 use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::mem;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -8,58 +10,80 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const SIGHUP: i32 = 1;
-const SIGINT: i32 = 2;
-const SIGKILL: i32 = 9;
-const SIGTERM: i32 = 15;
-const SIG_ERR: usize = usize::MAX;
 const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
+const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
-extern "C" {
-    fn kill(pid: i32, signal: i32) -> i32;
-    fn setsid() -> i32;
-    fn signal(signal: i32, handler: extern "C" fn(i32)) -> usize;
-    fn umask(mask: u32) -> u32;
-}
-
-extern "C" fn record_signal(signal: i32) {
+extern "C" fn record_signal(signal: c_int) {
     RECEIVED_SIGNAL.store(signal, Ordering::SeqCst);
 }
 
-fn install_signal_handlers() -> io::Result<()> {
-    for signal_number in [SIGHUP, SIGINT, SIGTERM] {
-        // SAFETY: `record_signal` has the required C ABI and remains valid for the process lifetime.
-        if unsafe { signal(signal_number, record_signal) } == SIG_ERR {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
+struct SignalHandlers {
+    previous: Vec<(c_int, libc::sigaction)>,
 }
 
-fn send_signal_to_group(process_group: i32, signal_number: i32) -> io::Result<()> {
-    // SAFETY: A negative PID targets the process group created with `setsid` below.
-    if unsafe { kill(-process_group, signal_number) } == 0 {
+impl SignalHandlers {
+    fn install() -> io::Result<Self> {
+        let mut previous = Vec::with_capacity(FORWARDED_SIGNALS.len());
+
+        for signal_number in FORWARDED_SIGNALS {
+            let mut action: libc::sigaction = unsafe { mem::zeroed() };
+            let mut old_action: libc::sigaction = unsafe { mem::zeroed() };
+            action.sa_sigaction = record_signal as usize;
+            action.sa_flags = 0;
+
+            if unsafe { libc::sigemptyset(&mut action.sa_mask) } == -1
+                || unsafe { libc::sigaction(signal_number, &action, &mut old_action) } == -1
+            {
+                let error = io::Error::last_os_error();
+                for (installed_signal, installed_action) in previous.iter().rev() {
+                    unsafe {
+                        libc::sigaction(*installed_signal, installed_action, std::ptr::null_mut());
+                    }
+                }
+                return Err(error);
+            }
+            previous.push((signal_number, old_action));
+        }
+
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for SignalHandlers {
+    fn drop(&mut self) {
+        for (signal_number, action) in self.previous.iter().rev() {
+            unsafe {
+                libc::sigaction(*signal_number, action, std::ptr::null_mut());
+            }
+        }
+    }
+}
+
+fn send_signal_to_group(process_group: pid_t, signal_number: c_int) -> io::Result<()> {
+    if unsafe { libc::kill(-process_group, signal_number) } == 0 {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
     }
 }
 
-fn process_group_is_alive(process_group: i32) -> bool {
-    // SAFETY: Signal 0 checks whether the process group exists without delivering a signal.
-    unsafe { kill(-process_group, 0) == 0 }
+fn process_group_is_alive(process_group: pid_t) -> bool {
+    if unsafe { libc::kill(-process_group, 0) } == 0 {
+        return true;
+    }
+    io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-fn wait_for_process_group(process_group: i32, duration: Duration) {
+fn wait_for_process_group(process_group: pid_t, duration: Duration) {
     let deadline = Instant::now() + duration;
     while process_group_is_alive(process_group) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
     }
 }
 
-fn finish_forwarded_signal(process_group: i32, forwarded_at: Instant, already_killed: bool) {
+fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_killed: bool) {
     if !already_killed {
         wait_for_process_group(
             process_group,
@@ -68,7 +92,7 @@ fn finish_forwarded_signal(process_group: i32, forwarded_at: Instant, already_ki
     }
 
     if process_group_is_alive(process_group) {
-        if let Err(error) = send_signal_to_group(process_group, SIGKILL) {
+        if let Err(error) = send_signal_to_group(process_group, libc::SIGKILL) {
             eprintln!("logcut: failed to terminate process group: {error}");
         }
         wait_for_process_group(process_group, SIGNAL_GRACE_PERIOD);
@@ -78,10 +102,10 @@ fn finish_forwarded_signal(process_group: i32, forwarded_at: Instant, already_ki
 pub(crate) fn run_suppressed(
     arguments: &[OsString],
     log_path: &Path,
-    original_umask: u32,
+    original_umask: libc::mode_t,
 ) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
-    install_signal_handlers()?;
+    let _signal_handlers = SignalHandlers::install()?;
     let log = OpenOptions::new().append(true).open(log_path)?;
     let stdout = Stdio::from(log.try_clone()?);
     let stderr = Stdio::from(log);
@@ -95,12 +119,10 @@ pub(crate) fn run_suppressed(
         .stdout(stdout)
         .stderr(stderr);
 
-    // SAFETY: `pre_exec` runs after fork and before exec; the closure only calls
-    // async-signal-safe functions and converts the `setsid` failure into an `io::Error`.
     unsafe {
         command.pre_exec(move || {
-            umask(original_umask);
-            if setsid() == -1 {
+            libc::umask(original_umask);
+            if libc::setsid() == -1 {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(())
@@ -126,7 +148,7 @@ pub(crate) fn run_suppressed(
         }
         Err(error) => return Err(error),
     };
-    let process_group = child.id() as i32;
+    let process_group = child.id() as pid_t;
     let mut forwarded = 0;
     let mut forwarded_at = None;
     let mut killed = false;
@@ -153,7 +175,7 @@ pub(crate) fn run_suppressed(
             && forwarded_at.is_some_and(|time| time.elapsed() >= SIGNAL_GRACE_PERIOD)
             && process_group_is_alive(process_group)
         {
-            if let Err(error) = send_signal_to_group(process_group, SIGKILL) {
+            if let Err(error) = send_signal_to_group(process_group, libc::SIGKILL) {
                 eprintln!("logcut: failed to terminate process group: {error}");
             }
             killed = true;
@@ -177,11 +199,12 @@ pub(crate) fn run_suppressed(
         .unwrap_or_else(|| 128 + exit_status.signal().unwrap_or(1)))
 }
 
-pub(crate) fn run_direct(arguments: &[OsString], original_umask: u32) -> io::Result<i32> {
-    // SAFETY: `umask` accepts any mode value and cannot fail. Restore the caller's mask before
-    // replacing this process so the command behaves exactly as it would without `logcut`.
+pub(crate) fn run_direct(
+    arguments: &[OsString],
+    original_umask: libc::mode_t,
+) -> io::Result<i32> {
     unsafe {
-        umask(original_umask);
+        libc::umask(original_umask);
     }
 
     let error = Command::new(&arguments[0])

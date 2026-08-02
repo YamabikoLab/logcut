@@ -80,8 +80,6 @@ cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.10 --lo
 logcut true
 ```
 
-Because this repository is private, Git authentication must already be configured for the environment running `cargo install`.
-
 ## Build
 
 ```bash

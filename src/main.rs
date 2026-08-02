@@ -76,7 +76,11 @@ fn read_command_line() -> CommandLine {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
 
-    if let Some(first) = arguments.first().and_then(|value| value.to_str()) {
+    loop {
+        let Some(first) = arguments.first().and_then(|value| value.to_str()) else {
+            break;
+        };
+
         match first {
             "--help" | "-h" => {
                 print_help();
@@ -89,10 +93,11 @@ fn read_command_line() -> CommandLine {
             _ => {}
         }
 
-        if let Some(value) = first.strip_prefix("--profile=") {
-            profile_value = value.to_string();
-            arguments.remove(0);
-        }
+        let Some(value) = first.strip_prefix("--profile=") else {
+            break;
+        };
+        profile_value = value.to_string();
+        arguments.remove(0);
     }
 
     let Some(profile) = Profile::parse(&profile_value) else {

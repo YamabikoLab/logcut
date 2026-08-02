@@ -19,23 +19,32 @@ When a command fails, it extracts the important parts of the output and presents
 
 ## Requirements
 
-- Linux x86_64 with GNU/glibc for the prebuilt binary
+- Linux x86_64 or ARM64 with GNU/glibc for the prebuilt binaries
 - Linux and Rust 1.70 or later when building from source
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.9` GitHub Release:
+Download `SHA256SUMS` and the archive matching your system from the `v0.1.10` GitHub Release:
 
 ```text
-logcut-v0.1.9-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.10-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.10-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
-Verify the archive, extract it, and install the binary for the current user:
+Check the machine architecture when needed:
+
+```bash
+uname -m
+```
+
+Use the `x86_64` archive when the command prints `x86_64`, or the `aarch64` archive when it prints `aarch64` or `arm64`.
+
+Verify the downloaded archive, extract it, and install the binary for the current user. The following example uses the x86_64 archive:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.9-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.10-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -65,7 +74,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.9 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.10 --locked
 logcut true
 ```
 

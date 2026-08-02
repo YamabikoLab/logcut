@@ -3,7 +3,6 @@
 `logcut` is a Linux command-line tool that keeps command output quiet and shows only a concise result.  
 When a command fails, it extracts the important parts of the output and presents an easy-to-read failure summary.
 
-
 ## Behavior
 
 - Prints the command name and argument count before execution.
@@ -25,10 +24,10 @@ When a command fails, it extracts the important parts of the output and presents
 
 ## Install from GitHub Release
 
-Download both of these files from the `v0.1.8` GitHub Release:
+Download both of these files from the `v0.1.9` GitHub Release:
 
 ```text
-logcut-v0.1.8-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.9-x86_64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -36,7 +35,7 @@ Verify the archive, extract it, and install the binary for the current user:
 
 ```bash
 sha256sum --check SHA256SUMS
-tar -xzf logcut-v0.1.8-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.9-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -66,7 +65,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.8 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.9 --locked
 logcut true
 ```
 
@@ -99,12 +98,22 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ## Usage
 
 ```bash
-logcut [--profile=PROFILE] <command> [arguments...]
+logcut [OPTIONS] <command> [arguments...]
+```
+
+Options:
+
+```text
+--profile=PROFILE  Select the failure-summary profile (default: auto)
+-h, --help         Print help
+-V, --version      Print version
 ```
 
 Examples:
 
 ```bash
+logcut --version
+logcut --help
 logcut npm test
 logcut --profile=jest npm test
 logcut --profile=stylelint npm run lint:css
@@ -112,6 +121,8 @@ logcut --profile=phpcs composer lint:php
 logcut --profile=webpack npm run build
 logcut --profile=playwright npm run test:e2e
 ```
+
+`logcut` options are recognized only before the command. Therefore, `logcut --help` prints logcut's help, while `logcut npm --help` runs `npm --help`.
 
 A successful command produces output similar to:
 
@@ -126,24 +137,26 @@ When a command fails, `logcut` prints a concise summary and the path to the reta
 
 The default profile is `auto`. Supported profiles are:
 
-- `auto`
-- `jest`
-- `vitest`
-- `prettier`
-- `eslint`
-- `stylelint`
-- `typescript`
-- `phpunit`
-- `phpstan`
-- `php-lint`
-- `phpcs`
-- `phpcbf`
-- `contract`
-- `vite`
-- `webpack`
-- `composer`
-- `playwright`
-- `generic`
+| Profile | Description |
+| --- | --- |
+| `auto` | Detect the profile from command output. |
+| `jest` | Summarize Jest test failures. |
+| `vitest` | Summarize Vitest test failures. |
+| `prettier` | Summarize Prettier formatting failures. |
+| `eslint` | Summarize ESLint errors. |
+| `stylelint` | Summarize Stylelint errors. |
+| `typescript` | Summarize TypeScript compiler errors. |
+| `phpunit` | Summarize PHPUnit test failures. |
+| `phpstan` | Summarize PHPStan analysis errors. |
+| `php-lint` | Summarize PHP syntax errors. |
+| `phpcs` | Summarize PHP_CodeSniffer violations. |
+| `phpcbf` | Summarize PHP Code Beautifier and Fixer results. |
+| `contract` | Summarize contract-check failures. |
+| `vite` | Summarize Vite build failures. |
+| `webpack` | Summarize webpack build failures. |
+| `composer` | Summarize Composer failures. |
+| `playwright` | Summarize Playwright test failures. |
+| `generic` | Show the tail of the command output. |
 
 Stylelint output for CSS, SCSS, Sass, and Less files is detected automatically, including failures left after `lint-style --fix`. PHPCS, PHPCBF, and webpack output from `wp-scripts build` are also detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
 

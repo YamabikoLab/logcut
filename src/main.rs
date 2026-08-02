@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use summary::{detect_profile, summarize, Profile};
 
+const USAGE: &str = "Usage: logcut [OPTIONS] <command> [arguments...]";
+
 pub(crate) struct Settings {
     pub(crate) profile: Profile,
     pub(crate) summary_lines: usize,
@@ -33,6 +35,14 @@ pub(crate) struct Settings {
 pub(crate) struct SummarySettings {
     pub(crate) summary_lines: usize,
     pub(crate) max_errors: usize,
+}
+
+enum CommandLine {
+    Run {
+        arguments: Vec<OsString>,
+        profile: Profile,
+    },
+    Exit(i32),
 }
 
 fn main() {
@@ -49,8 +59,9 @@ fn main() {
 fn run() -> io::Result<i32> {
     let original_umask = set_private_umask();
 
-    let Some((arguments, profile)) = read_command_line() else {
-        return Ok(2);
+    let (arguments, profile) = match read_command_line() {
+        CommandLine::Run { arguments, profile } => (arguments, profile),
+        CommandLine::Exit(code) => return Ok(code),
     };
     let settings = settings_from_environment(profile);
 
@@ -61,28 +72,75 @@ fn set_private_umask() -> libc::mode_t {
     unsafe { libc::umask(0o077) }
 }
 
-fn read_command_line() -> Option<(Vec<OsString>, Profile)> {
+fn read_command_line() -> CommandLine {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
 
-    if let Some(first) = arguments.first().and_then(|value| value.to_str()) {
-        if let Some(value) = first.strip_prefix("--profile=") {
-            profile_value = value.to_string();
-            arguments.remove(0);
+    while let Some(first) = arguments.first().and_then(|value| value.to_str()) {
+        match first {
+            "--help" | "-h" => {
+                print_help();
+                return CommandLine::Exit(0);
+            }
+            "--version" | "-V" => {
+                println!("logcut {}", env!("CARGO_PKG_VERSION"));
+                return CommandLine::Exit(0);
+            }
+            _ => {}
         }
+
+        let Some(value) = first.strip_prefix("--profile=") else {
+            break;
+        };
+        profile_value = value.to_string();
+        arguments.remove(0);
     }
 
     let Some(profile) = Profile::parse(&profile_value) else {
         eprintln!("Unknown profile: {profile_value}");
-        return None;
+        eprintln!("Run 'logcut --help' to see the available profiles.");
+        return CommandLine::Exit(2);
     };
 
     if arguments.is_empty() {
-        eprintln!("Usage: logcut [--profile=PROFILE] <command> [arguments...]");
-        return None;
+        eprintln!("{USAGE}");
+        eprintln!("Run 'logcut --help' for more information.");
+        return CommandLine::Exit(2);
     }
 
-    Some((arguments, profile))
+    CommandLine::Run { arguments, profile }
+}
+
+fn print_help() {
+    println!(
+        "logcut - run commands quietly and show concise failure summaries\n\n\
+{USAGE}\n\n\
+Options:\n\
+  --profile=PROFILE  Select the failure-summary profile (default: auto)\n\
+  -h, --help         Print help\n\
+  -V, --version      Print version\n\n\
+Profiles:\n\
+  auto        Detect the profile from command output\n\
+  jest        Summarize Jest test failures\n\
+  vitest      Summarize Vitest test failures\n\
+  prettier    Summarize Prettier formatting failures\n\
+  eslint      Summarize ESLint errors\n\
+  stylelint   Summarize Stylelint errors\n\
+  typescript  Summarize TypeScript compiler errors\n\
+  phpunit     Summarize PHPUnit test failures\n\
+  phpstan     Summarize PHPStan analysis errors\n\
+  php-lint    Summarize PHP syntax errors\n\
+  phpcs       Summarize PHP_CodeSniffer violations\n\
+  phpcbf      Summarize PHP Code Beautifier and Fixer results\n\
+  contract    Summarize contract-check failures\n\
+  vite        Summarize Vite build failures\n\
+  webpack     Summarize webpack build failures\n\
+  composer    Summarize Composer failures\n\
+  playwright  Summarize Playwright test failures\n\
+  generic     Show the tail of the command output\n\n\
+logcut options are recognized only before the command. For example,\n\
+'logcut --help' prints this help, while 'logcut npm --help' runs npm --help."
+    );
 }
 
 fn settings_from_environment(profile: Profile) -> Settings {

@@ -64,6 +64,36 @@ fn version_flags_show_package_version() {
 }
 
 #[test]
+fn help_flags_after_profile_show_help() {
+    for flag in ["--help", "-h"] {
+        let output = Command::new(binary())
+            .args(["--profile=generic", flag])
+            .output()
+            .unwrap();
+        let text = combined(&output);
+
+        assert!(output.status.success(), "{flag}: {text}");
+        assert!(text.contains("Usage: logcut [OPTIONS] <command> [arguments...]"));
+        assert!(text.contains("Profiles:"));
+        assert!(!text.contains("Running:"));
+    }
+}
+
+#[test]
+fn version_flags_after_profile_show_package_version() {
+    for flag in ["--version", "-V"] {
+        let output = Command::new(binary())
+            .args(["--profile=generic", flag])
+            .output()
+            .unwrap();
+        let text = combined(&output);
+
+        assert!(output.status.success(), "{flag}: {text}");
+        assert_eq!(text.trim(), format!("logcut {}", env!("CARGO_PKG_VERSION")));
+    }
+}
+
+#[test]
 fn command_help_argument_is_forwarded_to_the_child() {
     let root = TestDir::new("logcut-test", "child-help");
     let output = Command::new(binary())

@@ -76,6 +76,8 @@ jobs:
 
           mkdir -p dist
           install -m 0755 "target/${TARGET}/release/logcut" dist/logcut
+          dist/logcut --version
+          dist/logcut --help > /dev/null
           dist/logcut true
 
           tar -C dist -czf "${ARCHIVE}" logcut

@@ -74,7 +74,7 @@ fn command_help_argument_is_forwarded_to_the_child() {
     let text = combined(&output);
 
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("Running: sh [3 args]"));
+    assert!(text.contains("Running: sh [4 args]"));
     assert!(text.contains("PASS ("));
     assert!(!text.contains("Profiles:"));
 }

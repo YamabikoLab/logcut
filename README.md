@@ -1,6 +1,8 @@
 # logcut
 
-`logcut` is a Linux command-line tool that runs another command quietly and prints only a short result.
+`logcut` is a Linux command-line tool that keeps command output quiet and shows only a concise result.  
+When a command fails, it extracts the important parts of the output and presents an easy-to-read failure summary.
+
 
 ## Behavior
 

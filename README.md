@@ -43,7 +43,7 @@ Use the `x86_64` archive when the command prints `x86_64`, or the `aarch64` arch
 Verify the downloaded archive, extract it, and install the binary for the current user. The following example uses the x86_64 archive:
 
 ```bash
-sha256sum --check SHA256SUMS
+sha256sum --ignore-missing --check SHA256SUMS
 tar -xzf logcut-v0.1.10-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut

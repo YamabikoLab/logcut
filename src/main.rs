@@ -76,11 +76,7 @@ fn read_command_line() -> CommandLine {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
 
-    loop {
-        let Some(first) = arguments.first().and_then(|value| value.to_str()) else {
-            break;
-        };
-
+    while let Some(first) = arguments.first().and_then(|value| value.to_str()) {
         match first {
             "--help" | "-h" => {
                 print_help();

@@ -1,7 +1,40 @@
 # logcut
 
-`logcut` is a Linux command-line tool that keeps command output quiet and shows only a concise result.  
-When a command fails, it extracts the important parts of the output and presents an easy-to-read failure summary.
+Reduce AI token usage with concise failure summaries for WordPress development commands.
+
+`logcut` is a Linux command-line tool for AI-assisted WordPress plugin and theme development. It keeps successful command output quiet and extracts the useful parts of failed output, so an AI coding assistant receives a focused result instead of a long stream of routine logs.
+
+It is especially useful with PHPCS, PHPCBF, PHPUnit, PHPStan, `wp-scripts`, Stylelint, Composer, and other commands commonly used in WordPress development. Docker, Git, Jest, Vitest, and the other supported profiles remain available for the surrounding development workflow.
+
+## WordPress development examples
+
+Run the commands you already use through `logcut`:
+
+```bash
+logcut --profile=phpcs composer lint:php
+logcut --profile=phpcbf composer format:php
+logcut --profile=phpunit composer test
+logcut --profile=phpstan composer analyse
+logcut --profile=stylelint npm run lint:css
+logcut npm run build
+```
+
+When a command succeeds, `logcut` normally returns only a short result:
+
+```text
+Running: composer [1 args]
+PASS (2s): composer [1 args]
+```
+
+When a command fails, it reports a concise profile-specific summary. By default, it also retains the full failure log after applying best-effort secret masking; use `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` to discard the log after summary generation.
+
+## Why use logcut
+
+- Reduce routine command output sent to AI coding assistants.
+- Surface the errors and file locations that matter first.
+- Use WordPress-focused profiles without changing the underlying commands.
+- Preserve the original exit code and choose whether to retain or discard the full failure log.
+- Apply best-effort redaction of common secrets to summaries and retained failure logs.
 
 ## Behavior
 

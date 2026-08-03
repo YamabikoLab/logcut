@@ -224,10 +224,14 @@ fn redact_url_userinfo(line: &str) -> String {
 }
 
 fn redact_key_value(line: &str, key: &str) -> String {
-    let lower = line.to_ascii_lowercase();
+    let mut result = line.to_string();
     let mut search_from = 0usize;
 
-    while let Some(relative) = lower[search_from..].find(key) {
+    loop {
+        let lower = result.to_ascii_lowercase();
+        let Some(relative) = lower[search_from..].find(key) else {
+            break;
+        };
         let key_start = search_from + relative;
         let key_end = key_start + key.len();
         let before_is_boundary = key_start == 0
@@ -239,10 +243,10 @@ fn redact_key_value(line: &str, key: &str) -> String {
         }
 
         let mut separator = key_end;
-        while separator < line.len() && line.as_bytes()[separator].is_ascii_whitespace() {
+        while separator < result.len() && result.as_bytes()[separator].is_ascii_whitespace() {
             separator += 1;
         }
-        if !line
+        if !result
             .as_bytes()
             .get(separator)
             .is_some_and(|byte| matches!(*byte, b':' | b'='))
@@ -253,26 +257,25 @@ fn redact_key_value(line: &str, key: &str) -> String {
 
         let value_start = separator + 1;
         let mut value_end = value_start;
-        while value_end < line.len() && line.as_bytes()[value_end].is_ascii_whitespace() {
+        while value_end < result.len() && result.as_bytes()[value_end].is_ascii_whitespace() {
             value_end += 1;
         }
         if key.contains("authorization") {
-            value_end = line.len();
+            value_end = result.len();
         } else {
-            while value_end < line.len()
-                && !line.as_bytes()[value_end].is_ascii_whitespace()
-                && !matches!(line.as_bytes()[value_end], b',' | b';')
+            while value_end < result.len()
+                && !result.as_bytes()[value_end].is_ascii_whitespace()
+                && !matches!(result.as_bytes()[value_end], b',' | b';')
             {
                 value_end += 1;
             }
         }
 
-        let mut result = line.to_string();
         result.replace_range(value_start..value_end, " [REDACTED]");
-        return result;
+        search_from = value_start + " [REDACTED]".len();
     }
 
-    line.to_string()
+    result
 }
 
 fn skip_escape_sequence(input: &[u8], start: usize) -> usize {
@@ -343,5 +346,18 @@ mod tests {
         assert!(output.contains("Authorization: [REDACTED]"));
         assert!(output.contains("TOKEN= [REDACTED]"));
         assert!(output.contains("https://[REDACTED]@example.invalid/repo"));
+    }
+
+    #[test]
+    fn redacts_repeated_sensitive_assignments_on_one_line() {
+        let output = normalize_output(
+            b"token=first-secret token=second-secret password=third-secret password=fourth-secret\n"
+                .to_vec(),
+        );
+        assert!(!output.contains("first-secret"));
+        assert!(!output.contains("second-secret"));
+        assert!(!output.contains("third-secret"));
+        assert!(!output.contains("fourth-secret"));
+        assert_eq!(output.matches("[REDACTED]").count(), 4);
     }
 }

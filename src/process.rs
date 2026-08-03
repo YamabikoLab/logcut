@@ -1,8 +1,8 @@
 use crate::logging::redact_log_file;
 use libc::{c_int, pid_t};
-use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::ffi::{OsStr, OsString};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::mem;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
@@ -101,8 +101,68 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
     }
 }
 
+fn write_log_snapshot(
+    source: File,
+    length: u64,
+    temporary_path: &Path,
+    mut snapshot: File,
+    path: &Path,
+) -> io::Result<()> {
+    let mut limited = source.take(length);
+    io::copy(&mut limited, &mut snapshot)?;
+    snapshot.flush()?;
+    snapshot.sync_all()?;
+    drop(snapshot);
+    fs::rename(temporary_path, path)
+}
+
+fn snapshot_log(path: &Path) -> io::Result<()> {
+    let source = File::open(path)?;
+    let length = source.metadata()?.len();
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("command.log");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    for attempt in 0..1000u32 {
+        let temporary_path = directory.join(format!(
+            ".{name}.snapshot.{}.{}.{}.tmp",
+            std::process::id(),
+            nanos,
+            attempt
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary_path)
+        {
+            Ok(snapshot) => {
+                let result =
+                    write_log_snapshot(source, length, &temporary_path, snapshot, path);
+                if result.is_err() {
+                    let _ = fs::remove_file(&temporary_path);
+                }
+                return result;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a temporary log snapshot",
+    ))
+}
+
 fn finalize_log(log_path: &Path) {
-    match redact_log_file(log_path) {
+    match snapshot_log(log_path).and_then(|_| redact_log_file(log_path)) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {

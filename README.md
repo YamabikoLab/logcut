@@ -3,8 +3,6 @@
 `logcut` is a Linux command-line tool that keeps command output quiet and shows only a concise result.  
 When a command fails, it extracts the important parts of the output and presents an easy-to-read failure summary.
 
-<img width="1491" height="1055" alt="logcut-overview" src="https://github.com/user-attachments/assets/5b8960da-5986-43bb-8122-155df4c8ef13" />
-
 ## Behavior
 
 - Prints the command name and argument count before execution.

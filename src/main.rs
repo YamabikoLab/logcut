@@ -75,15 +75,21 @@ impl<'a> FailedLogCleanup<'a> {
         }
     }
 
-    fn discard_now(&mut self) {
+    fn discard_now(&mut self) -> io::Result<()> {
         if !self.pending {
-            return;
+            return Ok(());
         }
 
         match fs::remove_file(self.path) {
-            Ok(()) => self.pending = false,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => self.pending = false,
-            Err(_) => {}
+            Ok(()) => {
+                self.pending = false;
+                Ok(())
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.pending = false;
+                Ok(())
+            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -92,6 +98,19 @@ impl Drop for FailedLogCleanup<'_> {
     fn drop(&mut self) {
         if self.pending {
             let _ = fs::remove_file(self.path);
+        }
+    }
+}
+
+fn report_failed_log_discard(cleanup: &mut FailedLogCleanup<'_>) {
+    match cleanup.discard_now() {
+        Ok(()) => eprintln!("Full log discarded."),
+        Err(error) => {
+            eprintln!(
+                "logcut: failed to discard full log {}: {error}",
+                cleanup.path.display()
+            );
+            eprintln!("Full log may remain: {}", cleanup.path.display());
         }
     }
 }
@@ -196,7 +215,7 @@ Options:\n\
 Profiles:\n\
   auto          Detect the profile from command output\n\
   jest          Summarize Jest test failures\n\
-  vitest        Summarize Vitest test failures\n\
+  vitest        Summarize Vitest failures\n\
   prettier      Summarize Prettier formatting failures\n\
   eslint        Summarize ESLint errors\n\
   stylelint     Summarize Stylelint errors\n\
@@ -337,8 +356,7 @@ fn handle_command_result(
             if settings.retain_failed_log {
                 eprintln!("Full log: {}", log_path.display());
             } else {
-                cleanup.discard_now();
-                eprintln!("Full log discarded.");
+                report_failed_log_discard(&mut cleanup);
             }
             return Ok(status);
         }
@@ -396,8 +414,8 @@ fn handle_command_result(
             settings.max_log_files,
         );
     } else {
-        cleanup.discard_now();
-        eprintln!("\nFull log discarded.");
+        eprintln!();
+        report_failed_log_discard(&mut cleanup);
     }
     Ok(status)
 }

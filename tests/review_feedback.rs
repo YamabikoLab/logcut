@@ -4,7 +4,6 @@ mod common;
 
 use common::{prepare_log_directory, TestDir};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;

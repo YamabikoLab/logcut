@@ -16,8 +16,10 @@ When a command fails, it extracts the important parts of the output and presents
 - Forwards `HUP`, `INT`, and `TERM` to the child process group.
 - Runs the child command with the caller's original umask.
 - Removes terminal escape sequences and unsafe control characters from summaries.
-- Redacts common authorization headers, token/password assignments, and URL credentials from summaries.
+- Redacts common authorization headers, token/password assignments, and URL credentials from summaries and retained failure logs.
 - Restricts the log directory to mode `0700` and prunes old logs.
+
+Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
 
 ## Requirements
 
@@ -156,7 +158,7 @@ Remote: github.com:YamabikoLab/logcut.git
 1111111..2222222  main -> main
 ```
 
-When a command fails, `logcut` prints a concise summary and the path to the retained full log.
+When a command fails, `logcut` prints a concise summary and the path to the retained full log. The retained log is rewritten with the same best-effort secret masking used for summaries before its path is reported.
 
 ## Profiles
 

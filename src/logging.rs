@@ -243,6 +243,9 @@ fn redact_key_value(line: &str, key: &str) -> String {
         }
 
         let mut separator = key_end;
+        if result.as_bytes().get(separator) == Some(&b'"') {
+            separator += 1;
+        }
         while separator < result.len() && result.as_bytes()[separator].is_ascii_whitespace() {
             separator += 1;
         }
@@ -256,20 +259,41 @@ fn redact_key_value(line: &str, key: &str) -> String {
         }
 
         let value_start = separator + 1;
-        let mut value_end = value_start;
-        while value_end < result.len() && result.as_bytes()[value_end].is_ascii_whitespace() {
-            value_end += 1;
+        let mut content_start = value_start;
+        while content_start < result.len()
+            && result.as_bytes()[content_start].is_ascii_whitespace()
+        {
+            content_start += 1;
         }
-        if key.contains("authorization") {
-            value_end = result.len();
-        } else {
-            while value_end < result.len()
-                && !result.as_bytes()[value_end].is_ascii_whitespace()
-                && !matches!(result.as_bytes()[value_end], b',' | b';')
-            {
-                value_end += 1;
+
+        let value_end = if key.contains("authorization") {
+            result.len()
+        } else if let Some(quote @ (b'\'' | b'"')) = result.as_bytes().get(content_start).copied() {
+            let mut index = content_start + 1;
+            let mut escaped = false;
+            while index < result.len() {
+                let byte = result.as_bytes()[index];
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == quote {
+                    index += 1;
+                    break;
+                }
+                index += 1;
             }
-        }
+            index
+        } else {
+            let mut index = content_start;
+            while index < result.len()
+                && !result.as_bytes()[index].is_ascii_whitespace()
+                && !matches!(result.as_bytes()[index], b',' | b';' | b'}' | b']')
+            {
+                index += 1;
+            }
+            index
+        };
 
         result.replace_range(value_start..value_end, " [REDACTED]");
         search_from = value_start + " [REDACTED]".len();
@@ -358,6 +382,19 @@ mod tests {
         assert!(!output.contains("second-secret"));
         assert!(!output.contains("third-secret"));
         assert!(!output.contains("fourth-secret"));
+        assert_eq!(output.matches("[REDACTED]").count(), 4);
+    }
+
+    #[test]
+    fn redacts_quoted_and_json_sensitive_values() {
+        let output = normalize_output(
+            br#"password="alpha beta" token='gamma delta' {"token":"json secret","password": "other secret"}
+"#
+            .to_vec(),
+        );
+        for secret in ["alpha beta", "gamma delta", "json secret", "other secret"] {
+            assert!(!output.contains(secret));
+        }
         assert_eq!(output.matches("[REDACTED]").count(), 4);
     }
 }

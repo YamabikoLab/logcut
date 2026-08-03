@@ -102,18 +102,22 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
 }
 
 fn finalize_log(log_path: &Path) {
-    if let Err(error) = redact_log_file(log_path) {
-        let _ = fs::remove_file(log_path);
-        if let Ok(mut log) = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(log_path)
-        {
-            let _ = writeln!(
-                log,
-                "logcut: command output was discarded because secret masking failed: {error}"
-            );
+    match redact_log_file(log_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = fs::remove_file(log_path);
+            if let Ok(mut log) = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(log_path)
+            {
+                let _ = writeln!(
+                    log,
+                    "logcut: command output was discarded because secret masking failed: {error}"
+                );
+            }
         }
     }
 }

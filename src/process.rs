@@ -223,7 +223,9 @@ pub(crate) fn run_suppressed(
             .unwrap_or_else(|| 128 + exit_status.signal().unwrap_or(1))
     };
 
-    finalize_log(log_path);
+    if status != 0 {
+        finalize_log(log_path);
+    }
     Ok(status)
 }
 

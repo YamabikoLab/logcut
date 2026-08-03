@@ -499,7 +499,10 @@ fn git_subcommand(arguments: &[OsString]) -> Option<&str> {
     let mut index = 1;
     while index < values.len() {
         let value = values[index];
-        if matches!(value, "--help" | "-h" | "--version") {
+        if matches!(
+            value,
+            "--help" | "-h" | "--version" | "--html-path" | "--man-path" | "--info-path"
+        ) {
             return None;
         }
         if matches!(

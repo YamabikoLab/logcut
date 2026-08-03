@@ -45,6 +45,7 @@ pub(crate) struct Settings {
     pub(crate) max_log_files: usize,
     pub(crate) max_log_age_days: u64,
     pub(crate) log_directory: PathBuf,
+    retain_failed_log: bool,
 }
 
 pub(crate) struct SummarySettings {
@@ -56,8 +57,62 @@ enum CommandLine {
     Run {
         arguments: Vec<OsString>,
         profile: ProfileSelection,
+        retain_failed_log: bool,
     },
     Exit(i32),
+}
+
+struct FailedLogCleanup<'a> {
+    path: &'a Path,
+    pending: bool,
+}
+
+impl<'a> FailedLogCleanup<'a> {
+    fn new(path: &'a Path, retain_failed_log: bool) -> Self {
+        Self {
+            path,
+            pending: !retain_failed_log,
+        }
+    }
+
+    fn discard_now(&mut self) -> io::Result<()> {
+        if !self.pending {
+            return Ok(());
+        }
+
+        match fs::remove_file(self.path) {
+            Ok(()) => {
+                self.pending = false;
+                Ok(())
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.pending = false;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for FailedLogCleanup<'_> {
+    fn drop(&mut self) {
+        if self.pending {
+            let _ = fs::remove_file(self.path);
+        }
+    }
+}
+
+fn report_failed_log_discard(cleanup: &mut FailedLogCleanup<'_>) {
+    match cleanup.discard_now() {
+        Ok(()) => eprintln!("Full log discarded."),
+        Err(error) => {
+            eprintln!(
+                "logcut: failed to discard full log {}: {error}",
+                cleanup.path.display()
+            );
+            eprintln!("Full log may remain: {}", cleanup.path.display());
+        }
+    }
 }
 
 fn main() {
@@ -74,11 +129,15 @@ fn main() {
 fn run() -> io::Result<i32> {
     let original_umask = set_private_umask();
 
-    let (arguments, profile) = match read_command_line() {
-        CommandLine::Run { arguments, profile } => (arguments, profile),
+    let (arguments, profile, retain_failed_log) = match read_command_line() {
+        CommandLine::Run {
+            arguments,
+            profile,
+            retain_failed_log,
+        } => (arguments, profile, retain_failed_log),
         CommandLine::Exit(code) => return Ok(code),
     };
-    let settings = settings_from_environment(profile);
+    let settings = settings_from_environment(profile, retain_failed_log);
 
     run_command(&arguments, &settings, original_umask)
 }
@@ -98,6 +157,7 @@ fn parse_profile(value: &str) -> Option<ProfileSelection> {
 fn read_command_line() -> CommandLine {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
+    let mut retain_failed_log = None;
 
     while let Some(first) = arguments.first().and_then(|value| value.to_str()) {
         match first {
@@ -108,6 +168,11 @@ fn read_command_line() -> CommandLine {
             "--version" | "-V" => {
                 println!("logcut {}", env!("CARGO_PKG_VERSION"));
                 return CommandLine::Exit(0);
+            }
+            "--no-retain-log" => {
+                retain_failed_log = Some(false);
+                arguments.remove(0);
+                continue;
             }
             _ => {}
         }
@@ -131,7 +196,11 @@ fn read_command_line() -> CommandLine {
         return CommandLine::Exit(2);
     }
 
-    CommandLine::Run { arguments, profile }
+    CommandLine::Run {
+        arguments,
+        profile,
+        retain_failed_log: retain_failed_log.unwrap_or_else(retain_failed_log_from_environment),
+    }
 }
 
 fn print_help() {
@@ -140,12 +209,13 @@ fn print_help() {
 {USAGE}\n\n\
 Options:\n\
   --profile=PROFILE  Select the failure-summary profile (default: auto)\n\
+  --no-retain-log    Discard the full log after a failure summary\n\
   -h, --help         Print help\n\
   -V, --version      Print version\n\n\
 Profiles:\n\
   auto          Detect the profile from command output\n\
   jest          Summarize Jest test failures\n\
-  vitest        Summarize Vitest test failures\n\
+  vitest        Summarize Vitest failures\n\
   prettier      Summarize Prettier formatting failures\n\
   eslint        Summarize ESLint errors\n\
   stylelint     Summarize Stylelint errors\n\
@@ -168,7 +238,7 @@ logcut options are recognized only before the command. For example,\n\
     );
 }
 
-fn settings_from_environment(profile: ProfileSelection) -> Settings {
+fn settings_from_environment(profile: ProfileSelection, retain_failed_log: bool) -> Settings {
     Settings {
         profile,
         summary_lines: positive_setting(
@@ -194,12 +264,24 @@ fn settings_from_environment(profile: ProfileSelection) -> Settings {
         max_log_age_days: positive_setting(
             "LOGCUT_LOG_MAX_AGE_DAYS",
             env::var("LOGCUT_LOG_MAX_AGE_DAYS").ok(),
-            7,
+            1,
             30,
         ) as u64,
         log_directory: env::var_os("LOGCUT_LOG_DIRECTORY")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(format!("/tmp/logcut-{}", current_user_id()))),
+        retain_failed_log,
+    }
+}
+
+fn retain_failed_log_from_environment() -> bool {
+    match env::var("LOGCUT_RETAIN_FAILED_LOG").ok().as_deref() {
+        None | Some("1") => true,
+        Some("0") => false,
+        Some(value) => {
+            eprintln!("logcut: invalid LOGCUT_RETAIN_FAILED_LOG={value:?}; using 1");
+            true
+        }
     }
 }
 
@@ -262,12 +344,17 @@ fn handle_command_result(
         return Ok(0);
     }
 
+    let mut cleanup = FailedLogCleanup::new(log_path, settings.retain_failed_log);
     let raw = match read_log(log_path) {
         Ok(raw) => raw,
         Err(error) => {
             eprintln!("FAIL ({elapsed}s, exit {status}): {label}");
             eprintln!("logcut: failure summary could not be generated: {error}");
-            eprintln!("Full log: {}", log_path.display());
+            if settings.retain_failed_log {
+                eprintln!("Full log: {}", log_path.display());
+            } else {
+                report_failed_log_discard(&mut cleanup);
+            }
             return Ok(status);
         }
     };
@@ -315,13 +402,18 @@ fn handle_command_result(
     for line in summary {
         eprintln!("{line}");
     }
-    eprintln!("\nFull log: {}", log_path.display());
 
-    prune_logs(
-        &settings.log_directory,
-        settings.max_log_age_days,
-        settings.max_log_files,
-    );
+    if settings.retain_failed_log {
+        eprintln!("\nFull log: {}", log_path.display());
+        prune_logs(
+            &settings.log_directory,
+            settings.max_log_age_days,
+            settings.max_log_files,
+        );
+    } else {
+        eprintln!();
+        report_failed_log_discard(&mut cleanup);
+    }
     Ok(status)
 }
 

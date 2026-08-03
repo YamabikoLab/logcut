@@ -209,7 +209,7 @@ The default profile is `auto`. Supported profiles are:
 | --- | --- |
 | `auto` | Detect the profile from the command or command output. |
 | `jest` | Summarize Jest test failures. |
-| `vitest` | Summarize Vitest failures. |
+| `vitest` | Summarize Vitest test failures. |
 | `prettier` | Summarize Prettier formatting failures. |
 | `eslint` | Summarize ESLint errors. |
 | `stylelint` | Summarize Stylelint errors. |
@@ -221,9 +221,9 @@ The default profile is `auto`. Supported profiles are:
 | `phpcbf` | Summarize PHP Code Beautifier and Fixer results. |
 | `contract` | Summarize contract-check failures. |
 | `vite` | Summarize Vite build failures. |
-| `webpack` | Summarize webpack failures. |
+| `webpack` | Summarize webpack build failures. |
 | `composer` | Summarize Composer failures. |
-| `playwright` | Summarize Playwright failures. |
+| `playwright` | Summarize Playwright test failures. |
 | `docker-build` | Summarize `docker build` and `docker compose build` results. |
 | `git-transfer` | Summarize `git push`, `git pull`, and `git fetch` results. |
 | `generic` | Show the tail of the command output. |

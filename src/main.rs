@@ -21,14 +21,25 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use summary::{
-    command_profile, detect_profile, recognized_command_label, summarize, summarize_success, Profile,
-};
+use summary::{detect_profile, summarize, Profile};
 
 const USAGE: &str = "Usage: logcut [OPTIONS] <command> [arguments...]";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProfileSelection {
+    Standard(Profile),
+    DockerBuild,
+    GitTransfer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommandProfile {
+    DockerBuild,
+    GitTransfer,
+}
+
 pub(crate) struct Settings {
-    pub(crate) profile: Profile,
+    profile: ProfileSelection,
     pub(crate) summary_lines: usize,
     pub(crate) max_errors: usize,
     pub(crate) max_log_files: usize,
@@ -44,7 +55,7 @@ pub(crate) struct SummarySettings {
 enum CommandLine {
     Run {
         arguments: Vec<OsString>,
-        profile: Profile,
+        profile: ProfileSelection,
     },
     Exit(i32),
 }
@@ -76,6 +87,14 @@ fn set_private_umask() -> libc::mode_t {
     unsafe { libc::umask(0o077) }
 }
 
+fn parse_profile(value: &str) -> Option<ProfileSelection> {
+    match value {
+        "docker-build" => Some(ProfileSelection::DockerBuild),
+        "git-transfer" => Some(ProfileSelection::GitTransfer),
+        _ => Profile::parse(value).map(ProfileSelection::Standard),
+    }
+}
+
 fn read_command_line() -> CommandLine {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
@@ -100,7 +119,7 @@ fn read_command_line() -> CommandLine {
         arguments.remove(0);
     }
 
-    let Some(profile) = Profile::parse(&profile_value) else {
+    let Some(profile) = parse_profile(&profile_value) else {
         eprintln!("Unknown profile: {profile_value}");
         eprintln!("Run 'logcut --help' to see the available profiles.");
         return CommandLine::Exit(2);
@@ -149,7 +168,7 @@ logcut options are recognized only before the command. For example,\n\
     );
 }
 
-fn settings_from_environment(profile: Profile) -> Settings {
+fn settings_from_environment(profile: ProfileSelection) -> Settings {
     Settings {
         profile,
         summary_lines: positive_setting(
@@ -253,25 +272,43 @@ fn handle_command_result(
         }
     };
     let clean = normalize_output(raw);
-    let selected = selected_profile(settings.profile, arguments, &clean);
-    if successful_nonzero_exit(selected, status, &clean) {
-        println!("PASS ({elapsed}s): {label}");
-        let _ = fs::remove_file(log_path);
-        return Ok(0);
-    }
-
     let summary_settings = SummarySettings {
         summary_lines: settings.summary_lines,
         max_errors: settings.max_errors,
     };
-    let mut summary = summarize(selected, &clean, &summary_settings);
+
+    let command_profile = selected_command_profile(settings.profile, arguments);
+    let (profile_name, mut summary) = match command_profile {
+        Some(CommandProfile::DockerBuild) => (
+            "docker-build",
+            docker_build::summarize(&clean, settings.summary_lines, settings.max_errors),
+        ),
+        Some(CommandProfile::GitTransfer) => (
+            "git-transfer",
+            git_transfer::summarize(&clean, settings.summary_lines, settings.max_errors),
+        ),
+        None => {
+            let selected = match settings.profile {
+                ProfileSelection::Standard(Profile::Auto) => detect_profile(&clean),
+                ProfileSelection::Standard(profile) => profile,
+                ProfileSelection::DockerBuild | ProfileSelection::GitTransfer => unreachable!(),
+            };
+            if successful_nonzero_exit(selected, status, &clean) {
+                println!("PASS ({elapsed}s): {label}");
+                let _ = fs::remove_file(log_path);
+                return Ok(0);
+            }
+            (selected.as_str(), summarize(selected, &clean, &summary_settings))
+        }
+    };
+
     if !summary.iter().any(|line| !line.trim().is_empty()) {
         summary = summarize(Profile::Generic, &clean, &summary_settings);
     }
     limit_summary(&mut summary, settings.summary_lines);
 
     eprintln!("FAIL ({elapsed}s, exit {status}): {label}");
-    eprintln!("\n----- Failure summary ({}) -----", selected.as_str());
+    eprintln!("\n----- Failure summary ({profile_name}) -----");
     for line in summary {
         eprintln!("{line}");
     }
@@ -292,41 +329,66 @@ fn print_success(
     log_path: &Path,
     settings: &Settings,
 ) {
-    let selected = if settings.profile == Profile::Auto {
-        command_profile(arguments)
-    } else {
-        Some(settings.profile)
-    };
-
     println!("PASS ({elapsed}s): {label}");
 
-    let Some(selected) = selected else {
+    let Some(selected) = selected_command_profile(settings.profile, arguments) else {
         return;
     };
-    if !matches!(selected, Profile::DockerBuild | Profile::GitTransfer) {
-        return;
-    }
     let Ok(raw) = read_log(log_path) else {
         return;
     };
     let clean = normalize_output(raw);
-    let summary_settings = SummarySettings {
-        summary_lines: settings.summary_lines,
-        max_errors: settings.max_errors,
+    let mut summary = match selected {
+        CommandProfile::DockerBuild => {
+            docker_build::summarize_success(&clean, settings.summary_lines)
+        }
+        CommandProfile::GitTransfer => {
+            git_transfer::summarize_success(&clean, settings.summary_lines)
+        }
     };
-    let mut summary = summarize_success(selected, &clean, &summary_settings);
     limit_summary(&mut summary, settings.summary_lines);
     for line in summary {
         println!("{line}");
     }
 }
 
-fn selected_profile(configured: Profile, arguments: &[OsString], output: &str) -> Profile {
-    if configured == Profile::Auto {
-        command_profile(arguments).unwrap_or_else(|| detect_profile(output))
-    } else {
-        configured
+fn selected_command_profile(
+    configured: ProfileSelection,
+    arguments: &[OsString],
+) -> Option<CommandProfile> {
+    match configured {
+        ProfileSelection::DockerBuild => Some(CommandProfile::DockerBuild),
+        ProfileSelection::GitTransfer => Some(CommandProfile::GitTransfer),
+        ProfileSelection::Standard(Profile::Auto) => command_profile(arguments),
+        ProfileSelection::Standard(_) => None,
     }
+}
+
+fn command_profile(arguments: &[OsString]) -> Option<CommandProfile> {
+    let executable = Path::new(arguments.first()?)
+        .file_name()
+        .unwrap_or_else(|| OsStr::new(""))
+        .to_str()?;
+    match executable {
+        "docker" if recognizes_docker_build(arguments) => Some(CommandProfile::DockerBuild),
+        "git" if recognizes_git_transfer(arguments) => Some(CommandProfile::GitTransfer),
+        _ => None,
+    }
+}
+
+fn recognizes_docker_build(arguments: &[OsString]) -> bool {
+    let values: Vec<&str> = arguments.iter().filter_map(|value| value.to_str()).collect();
+    values.get(1) == Some(&"build")
+        || values.get(1) == Some(&"compose") && values.iter().skip(2).any(|value| *value == "build")
+}
+
+fn recognizes_git_transfer(arguments: &[OsString]) -> bool {
+    arguments
+        .iter()
+        .skip(1)
+        .filter_map(|value| value.to_str())
+        .find(|value| !value.starts_with('-'))
+        .is_some_and(|value| matches!(value, "push" | "pull" | "fetch"))
 }
 
 fn limit_summary(summary: &mut Vec<String>, maximum: usize) {
@@ -352,8 +414,22 @@ fn positive_setting(name: &str, value: Option<String>, fallback: usize, maximum:
 }
 
 fn command_label(arguments: &[OsString]) -> String {
-    if let Some(label) = recognized_command_label(arguments) {
-        return label.to_string();
+    if let Some(profile) = command_profile(arguments) {
+        return match profile {
+            CommandProfile::DockerBuild => {
+                if arguments.iter().any(|value| value == "compose") {
+                    "docker compose build".to_string()
+                } else {
+                    "docker build".to_string()
+                }
+            }
+            CommandProfile::GitTransfer => arguments
+                .iter()
+                .skip(1)
+                .filter_map(|value| value.to_str())
+                .find(|value| matches!(*value, "push" | "pull" | "fetch"))
+                .map_or_else(|| "git transfer".to_string(), |value| format!("git {value}")),
+        };
     }
 
     let name = Path::new(&arguments[0])

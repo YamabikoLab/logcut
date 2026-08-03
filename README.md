@@ -10,14 +10,19 @@ When a command fails, it extracts the important parts of the output and presents
 - Preserves a minimal success result for Docker builds and Git transfers.
 - Shows a profile-specific failure summary when the command fails.
 - Falls back to the tail of the log when no profile-specific summary is available.
-- Keeps the full log on failure and removes it on success.
+- Keeps the full log on failure by default and removes it on success.
+- Can discard the full failure log after generating the summary with `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0`.
 - Returns the original command exit code, except for a successful PHPCBF repair reported with exit code `1`.
 - Forwards stdin to the child command.
 - Forwards `HUP`, `INT`, and `TERM` to the child process group.
 - Runs the child command with the caller's original umask.
 - Removes terminal escape sequences and unsafe control characters from summaries.
-- Redacts common authorization headers, token/password assignments, and URL credentials from summaries.
-- Restricts the log directory to mode `0700` and prunes old logs.
+- Redacts common authorization headers, token/password assignments, and URL credentials from summaries and retained failure logs.
+- Restricts the log directory to mode `0700` and prunes logs older than one day by default.
+
+Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
+
+`--no-retain-log` and `LOGCUT_RETAIN_FAILED_LOG=0` remove the failure log during normal completion after the summary is generated. They do not guarantee that plaintext is never written to disk or that a log cannot remain after forced termination or an operating-system failure.
 
 ## Requirements
 
@@ -26,11 +31,11 @@ When a command fails, it extracts the important parts of the output and presents
 
 ## Install from GitHub Release
 
-Download `SHA256SUMS` and the archive matching your system from the `v0.1.11` GitHub Release:
+Download `SHA256SUMS` and the archive matching your system from the `v0.1.13` GitHub Release:
 
 ```text
-logcut-v0.1.11-x86_64-unknown-linux-gnu.tar.gz
-logcut-v0.1.11-aarch64-unknown-linux-gnu.tar.gz
+logcut-v0.1.13-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.13-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -46,7 +51,7 @@ Verify the downloaded archive, extract it, and install the binary for the curren
 
 ```bash
 sha256sum --ignore-missing --check SHA256SUMS
-tar -xzf logcut-v0.1.11-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.13-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -76,7 +81,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.11 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.13 --locked
 logcut true
 ```
 
@@ -114,6 +119,7 @@ Options:
 
 ```text
 --profile=PROFILE  Select the failure-summary profile (default: auto)
+--no-retain-log    Discard the full log after a failure summary
 -h, --help         Print help
 -V, --version      Print version
 ```
@@ -124,6 +130,8 @@ Examples:
 logcut --version
 logcut --help
 logcut npm test
+logcut --no-retain-log npm test
+LOGCUT_RETAIN_FAILED_LOG=0 logcut npm test
 logcut --profile=jest npm test
 logcut --profile=stylelint npm run lint:css
 logcut --profile=phpcs composer lint:php
@@ -156,7 +164,9 @@ Remote: github.com:YamabikoLab/logcut.git
 1111111..2222222  main -> main
 ```
 
-When a command fails, `logcut` prints a concise summary and the path to the retained full log.
+When a command fails, `logcut` prints a concise summary and, by default, the path to the retained full log. The retained log is rewritten with the same best-effort secret masking used for summaries before its path is reported.
+
+When `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` is used, `logcut` still generates the failure summary and preserves the command exit code, then removes the log and prints `Full log discarded.` instead of a path. The CLI option takes precedence over the environment setting.
 
 ## Profiles
 
@@ -226,9 +236,10 @@ Watch, follow, and interactive modes are not targeted by either profile.
 | `LOGCUT_MAX_ERRORS` | `20` | Maximum number of errors for profiles that support an error limit. |
 | `LOGCUT_LOG_DIRECTORY` | `/tmp/logcut-<uid>` | Directory used for retained failure logs. |
 | `LOGCUT_LOG_MAX_FILES` | `10` | Maximum number of retained logs. |
-| `LOGCUT_LOG_MAX_AGE_DAYS` | `7` | Maximum log age in days. |
+| `LOGCUT_LOG_MAX_AGE_DAYS` | `1` | Maximum log age in days. Expired logs are removed on a later `logcut` run. |
+| `LOGCUT_RETAIN_FAILED_LOG` | `1` | Set to `0` to discard the full log after a failure summary. |
 
-Invalid positive-integer settings are reported and replaced with their defaults.
+Invalid positive-integer settings are reported and replaced with their defaults. `LOGCUT_RETAIN_FAILED_LOG` accepts `0` or `1`; invalid values are reported and treated as `1`.
 
 ## Development
 

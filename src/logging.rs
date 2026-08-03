@@ -274,6 +274,12 @@ fn write_redacted_line<W: Write>(line: &[u8], writer: &mut W) -> io::Result<()> 
 }
 
 pub(crate) fn prune_logs(directory: &Path, max_age_days: u64, max_files: usize) {
+    if validate_log_directory(directory).is_err()
+        || validate_log_directory_marker(&directory.join(LOG_DIRECTORY_MARKER)).is_err()
+    {
+        return;
+    }
+
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };

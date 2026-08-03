@@ -138,7 +138,8 @@ fn create_redacted_log(path: &Path) -> io::Result<(PathBuf, File)> {
 
 fn redact_log_file_to(path: &Path, temporary_path: &Path, temporary_file: File) -> io::Result<()> {
     let source = File::open(path)?;
-    let mut reader = BufReader::new(source);
+    let length = source.metadata()?.len();
+    let mut reader = BufReader::new(source.take(length));
     let mut writer = BufWriter::new(temporary_file);
     redact_stream(&mut reader, &mut writer)?;
     writer.flush()?;

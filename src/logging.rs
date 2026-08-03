@@ -1,8 +1,8 @@
 use std::cmp::Reverse;
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -28,20 +28,15 @@ const SENSITIVE_KEYS: [&str; 12] = [
 ];
 
 pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf> {
-    let created = match fs::symlink_metadata(&settings.log_directory) {
+    match fs::symlink_metadata(&settings.log_directory) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(unsafe_log_directory("log directory must not be a symlink"));
         }
-        Ok(_) => false,
+        Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir_all(&settings.log_directory)?;
-            true
+            create_log_directory(&settings.log_directory)?;
         }
         Err(error) => return Err(error),
-    };
-
-    if created {
-        fs::set_permissions(&settings.log_directory, fs::Permissions::from_mode(0o700))?;
     }
 
     validate_log_directory(&settings.log_directory)?;
@@ -54,6 +49,30 @@ pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf
     );
 
     create_unique_log(&settings.log_directory)
+}
+
+fn create_log_directory(directory: &Path) -> io::Result<()> {
+    if let Some(parent) = directory
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    create_log_directory_with(directory, |path| builder.create(path))
+}
+
+fn create_log_directory_with<F>(directory: &Path, create: F) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<()>,
+{
+    match create(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn validate_log_directory(directory: &Path) -> io::Result<()> {
@@ -553,6 +572,24 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("logcut-{name}-{}-{unique}.log", std::process::id()))
+    }
+
+    #[test]
+    fn directory_creation_race_does_not_change_existing_permissions() {
+        let directory = temporary_log("directory-creation-race");
+
+        create_log_directory_with(&directory, |path| {
+            fs::create_dir(path)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+            Err(io::Error::from(io::ErrorKind::AlreadyExists))
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        fs::remove_dir(directory).unwrap();
     }
 
     #[test]

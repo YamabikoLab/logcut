@@ -1,12 +1,14 @@
 use std::cmp::Reverse;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const FAILURE_LOG_TAIL_BYTES: u64 = 1024 * 1024;
+const MAX_REDACTION_LINE_BYTES: usize = 1024 * 1024;
+const LONG_LINE_REDACTION: &[u8] = b"[REDACTED: line exceeded safe masking limit]";
 const SECONDS_PER_DAY: u64 = 86_400;
 const SENSITIVE_KEYS: [&str; 12] = [
     "proxy-authorization",
@@ -87,6 +89,120 @@ fn create_unique_log(directory: &Path) -> io::Result<PathBuf> {
         io::ErrorKind::AlreadyExists,
         "could not allocate a unique log file",
     ))
+}
+
+pub(crate) fn redact_log_file(path: &Path) -> io::Result<()> {
+    let (temporary_path, temporary_file) = create_redacted_log(path)?;
+    let result = redact_log_file_to(path, &temporary_path, temporary_file);
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
+
+fn create_redacted_log(path: &Path) -> io::Result<(PathBuf, File)> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("command.log");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    for attempt in 0..1000u32 {
+        let temporary_path = directory.join(format!(
+            ".{name}.redacted.{}.{}.{}.tmp",
+            std::process::id(),
+            nanos,
+            attempt
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary_path)
+        {
+            Ok(file) => return Ok((temporary_path, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a temporary redacted log file",
+    ))
+}
+
+fn redact_log_file_to(path: &Path, temporary_path: &Path, temporary_file: File) -> io::Result<()> {
+    let source = File::open(path)?;
+    let length = source.metadata()?.len();
+    let mut reader = BufReader::new(source.take(length));
+    let mut writer = BufWriter::new(temporary_file);
+    redact_stream(&mut reader, &mut writer)?;
+    writer.flush()?;
+    let file = writer.into_inner().map_err(|error| error.into_error())?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(temporary_path, path)
+}
+
+fn redact_stream<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> io::Result<()> {
+    let mut line = Vec::new();
+    let mut discarding_long_line = false;
+
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            break;
+        }
+
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(available.len(), |index| index + 1);
+        let segment = &available[..consumed];
+        let ends_line = newline.is_some();
+
+        if discarding_long_line {
+            if ends_line {
+                writer.write_all(b"\n")?;
+                discarding_long_line = false;
+            }
+        } else if line.len().saturating_add(segment.len()) > MAX_REDACTION_LINE_BYTES {
+            writer.write_all(LONG_LINE_REDACTION)?;
+            line.clear();
+            if ends_line {
+                writer.write_all(b"\n")?;
+            } else {
+                discarding_long_line = true;
+            }
+        } else {
+            line.extend_from_slice(segment);
+            if ends_line {
+                write_redacted_line(&line, writer)?;
+                line.clear();
+            }
+        }
+
+        reader.consume(consumed);
+    }
+
+    if !discarding_long_line && !line.is_empty() {
+        write_redacted_line(&line, writer)?;
+    }
+
+    Ok(())
+}
+
+fn write_redacted_line<W: Write>(line: &[u8], writer: &mut W) -> io::Result<()> {
+    let text = String::from_utf8_lossy(line);
+    let redacted = redact_sensitive_output(&text);
+    if redacted == text.as_ref() {
+        writer.write_all(line)
+    } else {
+        writer.write_all(redacted.as_bytes())
+    }
 }
 
 pub(crate) fn prune_logs(directory: &Path, max_age_days: u64, max_files: usize) {
@@ -357,6 +473,14 @@ fn skip_string_sequence(input: &[u8], mut index: usize, allow_bel_terminator: bo
 mod tests {
     use super::*;
 
+    fn temporary_log(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("logcut-{name}-{}-{unique}.log", std::process::id()))
+    }
+
     #[test]
     fn redacts_headers_assignments_and_url_credentials() {
         let output = normalize_output(
@@ -395,5 +519,59 @@ mod tests {
             assert!(!output.contains(secret));
         }
         assert_eq!(output.matches("[REDACTED]").count(), 4);
+    }
+
+    #[test]
+    fn redacts_persisted_log_and_preserves_unmatched_bytes() {
+        let path = temporary_log("persisted-redaction");
+        let original = b"ordinary\x1b[31m output\npassword=top-secret\ninvalid:\xff\xfe\n";
+        fs::write(&path, original).unwrap();
+
+        redact_log_file(&path).unwrap();
+        let redacted = fs::read(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert!(redacted.starts_with(b"ordinary\x1b[31m output\n"));
+        assert!(redacted.ends_with(b"invalid:\xff\xfe\n"));
+        assert!(!redacted
+            .windows(b"top-secret".len())
+            .any(|value| value == b"top-secret"));
+        assert!(redacted
+            .windows(b"[REDACTED]".len())
+            .any(|value| value == b"[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_sensitive_values_on_invalid_utf8_lines() {
+        let path = temporary_log("invalid-utf8-redaction");
+        fs::write(&path, b"token=hidden\xffvalue\n").unwrap();
+
+        redact_log_file(&path).unwrap();
+        let redacted = fs::read(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert!(!redacted
+            .windows(b"hidden".len())
+            .any(|value| value == b"hidden"));
+        assert!(!redacted
+            .windows(b"value".len())
+            .any(|value| value == b"value"));
+        assert!(redacted
+            .windows(b"[REDACTED]".len())
+            .any(|value| value == b"[REDACTED]"));
+    }
+
+    #[test]
+    fn replaces_oversized_single_lines_without_buffering_the_entire_line() {
+        let path = temporary_log("oversized-line");
+        let mut line = b"token=".to_vec();
+        line.resize(MAX_REDACTION_LINE_BYTES + 1, b'x');
+        fs::write(&path, line).unwrap();
+
+        redact_log_file(&path).unwrap();
+        let redacted = fs::read(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(redacted, LONG_LINE_REDACTION);
     }
 }

@@ -7,6 +7,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
@@ -133,5 +134,49 @@ fn large_output_is_processed_without_changing_the_exit_code() {
     let log = fs::read_to_string(retained_log(&root)).unwrap();
     assert!(log.contains("line-19999"), "missing final line");
     assert!(!log.contains("secret-"), "{log}");
+    assert!(log.contains("[REDACTED]"), "{log}");
+}
+
+#[test]
+fn background_writer_does_not_extend_log_finalization() {
+    let root = TestDir::new("logcut-issue-37", "background-writer");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_fake_command(
+        &bin,
+        "background-writer",
+        br#"(
+  i=0
+  while [ "$i" -lt 200 ]; do
+    printf 'password=background-secret-%s\n' "$i"
+    i=$((i + 1))
+    sleep 0.01
+  done
+) &
+printf '%s\n' 'password=foreground-secret'
+exit 7"#,
+    );
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let started = Instant::now();
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("background-writer")
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let text = combined(&output);
+
+    assert_eq!(output.status.code(), Some(7), "{text}");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "log finalization followed background writes for {elapsed:?}"
+    );
+
+    let log = fs::read_to_string(retained_log(&root)).unwrap();
+    assert!(!log.contains("foreground-secret"), "{log}");
+    assert!(!log.contains("background-secret"), "{log}");
     assert!(log.contains("[REDACTED]"), "{log}");
 }

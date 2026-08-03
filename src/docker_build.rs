@@ -12,18 +12,6 @@ const INSTRUCTIONS: [&str; 11] = [
     "WORKDIR",
 ];
 
-pub(crate) fn detect(output: &str) -> bool {
-    output.contains("failed to solve")
-        || output.contains("failed to read dockerfile")
-        || output.contains("dockerfile parse error")
-        || output.lines().any(|line| {
-            let trimmed = line.trim_start();
-            trimmed.starts_with("Dockerfile:")
-                || trimmed.starts_with("Containerfile:")
-                || is_buildkit_step(trimmed)
-        })
-}
-
 pub(crate) fn summarize(output: &str, maximum: usize, max_errors: usize) -> Vec<String> {
     let lines: Vec<&str> = output.lines().collect();
     let errors: Vec<String> = lines
@@ -254,13 +242,5 @@ mod tests {
         assert!(summary.iter().any(|line| line.contains("RUN npm ci")));
         assert!(summary.iter().any(|line| line.contains("Dockerfile:17")));
         assert!(summary.iter().any(|line| line.contains("exit code: 1")));
-    }
-
-    #[test]
-    fn detects_buildkit_without_matching_generic_build_text() {
-        assert!(detect(
-            "#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n"
-        ));
-        assert!(!detect("Build failed while compiling a frontend bundle\n"));
     }
 }

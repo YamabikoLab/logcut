@@ -8,6 +8,20 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const FAILURE_LOG_TAIL_BYTES: u64 = 1024 * 1024;
 const SECONDS_PER_DAY: u64 = 86_400;
+const SENSITIVE_KEYS: [&str; 12] = [
+    "proxy-authorization",
+    "authorization",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "x-api-key",
+    "api-key",
+    "api_token",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+];
 
 pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf> {
     match fs::symlink_metadata(&settings.log_directory) {
@@ -162,7 +176,101 @@ pub(crate) fn normalize_output(mut input: Vec<u8>) -> String {
         Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
     };
     output.retain(|character| character == '\n' || character == '\t' || !character.is_control());
-    output
+    redact_sensitive_output(&output)
+}
+
+fn redact_sensitive_output(output: &str) -> String {
+    let trailing_newline = output.ends_with('\n');
+    let mut redacted = output
+        .lines()
+        .map(redact_sensitive_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if trailing_newline {
+        redacted.push('\n');
+    }
+    redacted
+}
+
+fn redact_sensitive_line(line: &str) -> String {
+    let mut redacted = redact_url_userinfo(line);
+    for key in SENSITIVE_KEYS {
+        redacted = redact_key_value(&redacted, key);
+    }
+    redacted
+}
+
+fn redact_url_userinfo(line: &str) -> String {
+    let mut result = line.to_string();
+    let mut search_from = 0usize;
+
+    while let Some(relative) = result[search_from..].find("://") {
+        let authority_start = search_from + relative + 3;
+        let authority_end = result[authority_start..]
+            .find(|character: char| character.is_whitespace() || matches!(character, '/' | '?' | '#'))
+            .map_or(result.len(), |offset| authority_start + offset);
+        let Some(at_offset) = result[authority_start..authority_end].find('@') else {
+            search_from = authority_end.min(result.len());
+            continue;
+        };
+        let at = authority_start + at_offset;
+        result.replace_range(authority_start..at, "[REDACTED]");
+        search_from = authority_start + "[REDACTED]@".len();
+    }
+
+    result
+}
+
+fn redact_key_value(line: &str, key: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let mut search_from = 0usize;
+
+    while let Some(relative) = lower[search_from..].find(key) {
+        let key_start = search_from + relative;
+        let key_end = key_start + key.len();
+        let before_is_boundary = key_start == 0
+            || !lower.as_bytes()[key_start - 1].is_ascii_alphanumeric()
+                && !matches!(lower.as_bytes()[key_start - 1], b'_' | b'-');
+        if !before_is_boundary {
+            search_from = key_end;
+            continue;
+        }
+
+        let mut separator = key_end;
+        while separator < line.len() && line.as_bytes()[separator].is_ascii_whitespace() {
+            separator += 1;
+        }
+        if !line
+            .as_bytes()
+            .get(separator)
+            .is_some_and(|byte| matches!(*byte, b':' | b'='))
+        {
+            search_from = key_end;
+            continue;
+        }
+
+        let value_start = separator + 1;
+        let mut value_end = value_start;
+        while value_end < line.len() && line.as_bytes()[value_end].is_ascii_whitespace() {
+            value_end += 1;
+        }
+        if key.contains("authorization") {
+            value_end = line.len();
+        } else {
+            while value_end < line.len()
+                && !line.as_bytes()[value_end].is_ascii_whitespace()
+                && !matches!(line.as_bytes()[value_end], b',' | b';')
+            {
+                value_end += 1;
+            }
+        }
+
+        let mut result = line.to_string();
+        result.replace_range(value_start..value_end, " [REDACTED]");
+        return result;
+    }
+
+    line.to_string()
 }
 
 fn skip_escape_sequence(input: &[u8], start: usize) -> usize {
@@ -215,4 +323,23 @@ fn skip_string_sequence(input: &[u8], mut index: usize, allow_bel_terminator: bo
         index += 1;
     }
     index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_headers_assignments_and_url_credentials() {
+        let output = normalize_output(
+            b"Authorization: Bearer top-secret\nTOKEN=abc123 command\nhttps://user:password@example.invalid/repo\n"
+                .to_vec(),
+        );
+        assert!(!output.contains("top-secret"));
+        assert!(!output.contains("abc123"));
+        assert!(!output.contains("user:password"));
+        assert!(output.contains("Authorization: [REDACTED]"));
+        assert!(output.contains("TOKEN= [REDACTED]"));
+        assert!(output.contains("https://[REDACTED]@example.invalid/repo"));
+    }
 }

@@ -380,21 +380,176 @@ fn command_profile(arguments: &[OsString]) -> Option<CommandProfile> {
 }
 
 fn recognizes_docker_build(arguments: &[OsString]) -> bool {
-    let values: Vec<&str> = arguments
-        .iter()
-        .filter_map(|value| value.to_str())
-        .collect();
-    values.get(1) == Some(&"build")
-        || values.get(1) == Some(&"compose") && values.iter().skip(2).any(|value| *value == "build")
+    let Some(values) = utf8_arguments(arguments) else {
+        return false;
+    };
+    let Some((command_index, command)) = docker_subcommand(&values) else {
+        return false;
+    };
+
+    command == "build"
+        || command == "compose"
+            && compose_subcommand(&values[command_index + 1..]).is_some_and(|value| value == "build")
+}
+
+fn docker_subcommand<'a>(values: &'a [&str]) -> Option<(usize, &'a str)> {
+    let mut index = 1;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(value, "--help" | "-h" | "--version" | "-v") {
+            return None;
+        }
+        if matches!(
+            value,
+            "--config"
+                | "--context"
+                | "--host"
+                | "-H"
+                | "--log-level"
+                | "-l"
+                | "--tlscacert"
+                | "--tlscert"
+                | "--tlskey"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--config",
+                "--context",
+                "--host",
+                "--log-level",
+                "--tlscacert",
+                "--tlscert",
+                "--tlskey",
+            ],
+        ) {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some((index, value));
+    }
+    None
+}
+
+fn compose_subcommand<'a>(values: &'a [&str]) -> Option<&'a str> {
+    let mut index = 0;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(value, "--help" | "-h") {
+            return None;
+        }
+        if matches!(value, "--all-resources" | "--compatibility" | "--dry-run") {
+            index += 1;
+            continue;
+        }
+        if matches!(
+            value,
+            "--ansi"
+                | "--env-file"
+                | "--file"
+                | "-f"
+                | "--parallel"
+                | "--profile"
+                | "--progress"
+                | "--project-directory"
+                | "--project-name"
+                | "-p"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--ansi",
+                "--env-file",
+                "--file",
+                "--parallel",
+                "--profile",
+                "--progress",
+                "--project-directory",
+                "--project-name",
+            ],
+        ) {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            return None;
+        }
+        return Some(value);
+    }
+    None
 }
 
 fn recognizes_git_transfer(arguments: &[OsString]) -> bool {
-    arguments
-        .iter()
-        .skip(1)
-        .filter_map(|value| value.to_str())
-        .find(|value| !value.starts_with('-'))
-        .is_some_and(|value| matches!(value, "push" | "pull" | "fetch"))
+    git_subcommand(arguments).is_some_and(|value| matches!(value, "push" | "pull" | "fetch"))
+}
+
+fn git_subcommand(arguments: &[OsString]) -> Option<&str> {
+    let values = utf8_arguments(arguments)?;
+    let mut index = 1;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(value, "--help" | "-h" | "--version") {
+            return None;
+        }
+        if matches!(
+            value,
+            "-C"
+                | "-c"
+                | "--config-env"
+                | "--exec-path"
+                | "--git-dir"
+                | "--namespace"
+                | "--super-prefix"
+                | "--work-tree"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--config-env",
+                "--exec-path",
+                "--git-dir",
+                "--namespace",
+                "--super-prefix",
+                "--work-tree",
+            ],
+        ) || value.starts_with("-C") && value.len() > 2
+            || value.starts_with("-c") && value.len() > 2
+        {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some(value);
+    }
+    None
+}
+
+fn utf8_arguments(arguments: &[OsString]) -> Option<Vec<&str>> {
+    arguments.iter().map(|value| value.to_str()).collect()
+}
+
+fn has_option_value(value: &str, options: &[&str]) -> bool {
+    options.iter().any(|option| {
+        value
+            .strip_prefix(option)
+            .is_some_and(|suffix| suffix.starts_with('='))
+    })
 }
 
 fn limit_summary(summary: &mut Vec<String>, maximum: usize) {
@@ -429,15 +584,10 @@ fn command_label(arguments: &[OsString]) -> String {
                     "docker build".to_string()
                 }
             }
-            CommandProfile::GitTransfer => arguments
-                .iter()
-                .skip(1)
-                .filter_map(|value| value.to_str())
-                .find(|value| matches!(*value, "push" | "pull" | "fetch"))
-                .map_or_else(
-                    || "git transfer".to_string(),
-                    |value| format!("git {value}"),
-                ),
+            CommandProfile::GitTransfer => git_subcommand(arguments).map_or_else(
+                || "git transfer".to_string(),
+                |value| format!("git {value}"),
+            ),
         };
     }
 

@@ -260,8 +260,7 @@ fn redact_key_value(line: &str, key: &str) -> String {
 
         let value_start = separator + 1;
         let mut content_start = value_start;
-        while content_start < result.len()
-            && result.as_bytes()[content_start].is_ascii_whitespace()
+        while content_start < result.len() && result.as_bytes()[content_start].is_ascii_whitespace()
         {
             content_start += 1;
         }

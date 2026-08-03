@@ -64,7 +64,14 @@ fn docker_build_success_keeps_image_and_removes_progress() {
 fn docker_compose_success_keeps_built_services() {
     let output = run_fake(
         "docker",
-        &["compose", "--project-name", "sample", "build", "web", "worker"],
+        &[
+            "compose",
+            "--project-name",
+            "sample",
+            "build",
+            "web",
+            "worker",
+        ],
         "printf '%s\\n' 'web Built' 'worker Built' >&2",
     );
     let text = combined(&output);
@@ -143,7 +150,10 @@ fn docker_compose_non_build_commands_are_not_misdetected() {
         let text = combined(&output);
         assert!(output.status.success(), "{text}");
         assert!(!text.contains("Running: docker compose build"), "{text}");
-        assert!(!text.contains("Docker build completed successfully."), "{text}");
+        assert!(
+            !text.contains("Docker build completed successfully."),
+            "{text}"
+        );
     }
 }
 

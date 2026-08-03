@@ -389,7 +389,8 @@ fn recognizes_docker_build(arguments: &[OsString]) -> bool {
 
     command == "build"
         || command == "compose"
-            && compose_subcommand(&values[command_index + 1..]).is_some_and(|value| value == "build")
+            && compose_subcommand(&values[command_index + 1..])
+                .is_some_and(|value| value == "build")
 }
 
 fn docker_subcommand<'a>(values: &'a [&str]) -> Option<(usize, &'a str)> {
@@ -503,8 +504,7 @@ fn git_subcommand(arguments: &[OsString]) -> Option<&str> {
         }
         if matches!(
             value,
-            "-C"
-                | "-c"
+            "-C" | "-c"
                 | "--config-env"
                 | "--exec-path"
                 | "--git-dir"

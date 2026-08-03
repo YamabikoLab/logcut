@@ -137,7 +137,11 @@ fn remote_line(line: &str) -> Option<String> {
     let remote = trimmed
         .strip_prefix("To ")
         .or_else(|| trimmed.strip_prefix("From "))?;
-    if remote.is_empty() { None } else { Some(format!("Remote: {remote}")) }
+    if remote.is_empty() {
+        None
+    } else {
+        Some(format!("Remote: {remote}"))
+    }
 }
 
 fn is_ref_update(line: &str) -> bool {
@@ -206,8 +210,25 @@ mod tests {
 
     #[test]
     fn classifies_common_failures() {
-        assert_eq!(summarize("fatal: The current branch x has no upstream branch.\n", 10, 10)[0], "Cause: upstream branch is not configured");
-        assert_eq!(summarize("CONFLICT (content): Merge conflict\nAutomatic merge failed\n", 10, 10)[0], "Cause: merge conflict");
-        assert_eq!(summarize("Host key verification failed.\n", 10, 10)[0], "Cause: SSH connection or host-key verification failed");
+        assert_eq!(
+            summarize(
+                "fatal: The current branch x has no upstream branch.\n",
+                10,
+                10
+            )[0],
+            "Cause: upstream branch is not configured"
+        );
+        assert_eq!(
+            summarize(
+                "CONFLICT (content): Merge conflict\nAutomatic merge failed\n",
+                10,
+                10
+            )[0],
+            "Cause: merge conflict"
+        );
+        assert_eq!(
+            summarize("Host key verification failed.\n", 10, 10)[0],
+            "Cause: SSH connection or host-key verification failed"
+        );
     }
 }

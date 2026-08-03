@@ -1,6 +1,15 @@
 const INSTRUCTIONS: [&str; 11] = [
-    "ADD", "ARG", "COPY", "ENTRYPOINT", "ENV", "EXPOSE", "FROM", "HEALTHCHECK",
-    "RUN", "USER", "WORKDIR",
+    "ADD",
+    "ARG",
+    "COPY",
+    "ENTRYPOINT",
+    "ENV",
+    "EXPOSE",
+    "FROM",
+    "HEALTHCHECK",
+    "RUN",
+    "USER",
+    "WORKDIR",
 ];
 
 pub(crate) fn detect(output: &str) -> bool {
@@ -36,11 +45,19 @@ pub(crate) fn summarize(output: &str, maximum: usize, max_errors: usize) -> Vec<
         push_unique(&mut result, format!("Step: {step}"), maximum);
     }
 
-    if let Some(location) = lines.iter().rev().find_map(|line| dockerfile_location(line)) {
+    if let Some(location) = lines
+        .iter()
+        .rev()
+        .find_map(|line| dockerfile_location(line))
+    {
         push_unique(&mut result, location, maximum);
     }
 
-    if let Some(instruction) = lines.iter().rev().find_map(|line| extract_instruction(line)) {
+    if let Some(instruction) = lines
+        .iter()
+        .rev()
+        .find_map(|line| extract_instruction(line))
+    {
         push_unique(&mut result, format!("Instruction: {instruction}"), maximum);
     }
 
@@ -58,8 +75,7 @@ pub(crate) fn summarize_success(output: &str, maximum: usize) -> Vec<String> {
 
     for line in output.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("Successfully built ")
-            || trimmed.starts_with("Successfully tagged ")
+        if trimmed.starts_with("Successfully built ") || trimmed.starts_with("Successfully tagged ")
         {
             push_unique(&mut result, trimmed.to_string(), maximum);
             continue;
@@ -101,7 +117,10 @@ fn extract_service(line: &str) -> Option<String> {
     let close = step[open + 1..].find(']')? + open + 1;
     let first = step[open + 1..close].split_whitespace().next()?;
     if first.chars().all(|character| character.is_ascii_digit())
-        || matches!(first, "internal" | "auth" | "context" | "exporting" | "base" | "stage-0")
+        || matches!(
+            first,
+            "internal" | "auth" | "context" | "exporting" | "base" | "stage-0"
+        )
     {
         None
     } else {
@@ -120,13 +139,21 @@ fn extract_step(line: &str) -> Option<String> {
         .trim_end_matches(" CACHED")
         .trim_end_matches(" DONE")
         .trim();
-    if step.is_empty() { None } else { Some(step.to_string()) }
+    if step.is_empty() {
+        None
+    } else {
+        Some(step.to_string())
+    }
 }
 
 fn is_buildkit_step(line: &str) -> bool {
     let trimmed = line.trim_start();
     if let Some(rest) = trimmed.strip_prefix('#') {
-        return rest.chars().take_while(|character| character.is_ascii_digit()).count() > 0
+        return rest
+            .chars()
+            .take_while(|character| character.is_ascii_digit())
+            .count()
+            > 0
             && trimmed.contains('[')
             && trimmed.contains(']');
     }
@@ -140,7 +167,10 @@ fn dockerfile_location(line: &str) -> Option<String> {
         if let Some(index) = trimmed.find(name) {
             let location = trimmed[index + name.len()..].trim();
             if !location.is_empty()
-                && location.chars().next().is_some_and(|character| character.is_ascii_digit())
+                && location
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_digit())
             {
                 return Some(format!("{name}{location}"));
             }
@@ -228,7 +258,9 @@ mod tests {
 
     #[test]
     fn detects_buildkit_without_matching_generic_build_text() {
-        assert!(detect("#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n"));
+        assert!(detect(
+            "#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n"
+        ));
         assert!(!detect("Build failed while compiling a frontend bundle\n"));
     }
 }

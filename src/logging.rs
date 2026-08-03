@@ -207,7 +207,9 @@ fn redact_url_userinfo(line: &str) -> String {
     while let Some(relative) = result[search_from..].find("://") {
         let authority_start = search_from + relative + 3;
         let authority_end = result[authority_start..]
-            .find(|character: char| character.is_whitespace() || matches!(character, '/' | '?' | '#'))
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '/' | '?' | '#')
+            })
             .map_or(result.len(), |offset| authority_start + offset);
         let Some(at_offset) = result[authority_start..authority_end].find('@') else {
             search_from = authority_end.min(result.len());

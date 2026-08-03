@@ -298,7 +298,10 @@ fn handle_command_result(
                 let _ = fs::remove_file(log_path);
                 return Ok(0);
             }
-            (selected.as_str(), summarize(selected, &clean, &summary_settings))
+            (
+                selected.as_str(),
+                summarize(selected, &clean, &summary_settings),
+            )
         }
     };
 
@@ -377,7 +380,10 @@ fn command_profile(arguments: &[OsString]) -> Option<CommandProfile> {
 }
 
 fn recognizes_docker_build(arguments: &[OsString]) -> bool {
-    let values: Vec<&str> = arguments.iter().filter_map(|value| value.to_str()).collect();
+    let values: Vec<&str> = arguments
+        .iter()
+        .filter_map(|value| value.to_str())
+        .collect();
     values.get(1) == Some(&"build")
         || values.get(1) == Some(&"compose") && values.iter().skip(2).any(|value| *value == "build")
 }
@@ -428,7 +434,10 @@ fn command_label(arguments: &[OsString]) -> String {
                 .skip(1)
                 .filter_map(|value| value.to_str())
                 .find(|value| matches!(*value, "push" | "pull" | "fetch"))
-                .map_or_else(|| "git transfer".to_string(), |value| format!("git {value}")),
+                .map_or_else(
+                    || "git transfer".to_string(),
+                    |value| format!("git {value}"),
+                ),
         };
     }
 

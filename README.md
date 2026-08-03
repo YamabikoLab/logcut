@@ -26,15 +26,15 @@ Running: composer [1 args]
 PASS (2s): composer [1 args]
 ```
 
-When a command fails, it reports a concise profile-specific summary and keeps the full log available for deeper investigation.
+When a command fails, it reports a concise profile-specific summary. By default, it also retains the full failure log after applying best-effort secret masking; use `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` to discard the log after summary generation.
 
 ## Why use logcut
 
 - Reduce routine command output sent to AI coding assistants.
 - Surface the errors and file locations that matter first.
 - Use WordPress-focused profiles without changing the underlying commands.
-- Preserve the original exit code and retain the full failure log.
-- Redact common secrets from summaries and stored logs.
+- Preserve the original exit code and choose whether to retain or discard the full failure log.
+- Apply best-effort redaction of common secrets to summaries and retained failure logs.
 
 ## Behavior
 

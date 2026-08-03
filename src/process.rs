@@ -143,8 +143,7 @@ fn snapshot_log(path: &Path) -> io::Result<()> {
             .open(&temporary_path)
         {
             Ok(snapshot) => {
-                let result =
-                    write_log_snapshot(source, length, &temporary_path, snapshot, path);
+                let result = write_log_snapshot(source, length, &temporary_path, snapshot, path);
                 if result.is_err() {
                     let _ = fs::remove_file(&temporary_path);
                 }

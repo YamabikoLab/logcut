@@ -29,6 +29,7 @@ impl TestDir {
         let path =
             std::env::temp_dir().join(format!("{prefix}-{name}-{}-{unique}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
+        prepare_log_directory(&path.join("logs"));
         Self { path }
     }
 }

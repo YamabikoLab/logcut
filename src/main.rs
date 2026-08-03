@@ -205,7 +205,7 @@ fn read_command_line() -> CommandLine {
 
 fn print_help() {
     println!(
-        "logcut - run commands quietly and show concise failure summaries\n\n\
+        "logcut - concise, AI-friendly summaries for WordPress development commands\n\n\
 {USAGE}\n\n\
 Options:\n\
   --profile=PROFILE  Select the failure-summary profile (default: auto)\n\

@@ -3,6 +3,8 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("logcut currently supports Linux only");
 
+mod docker_build;
+mod git_transfer;
 mod logging;
 mod phpcbf;
 mod playwright;
@@ -23,8 +25,21 @@ use summary::{detect_profile, summarize, Profile};
 
 const USAGE: &str = "Usage: logcut [OPTIONS] <command> [arguments...]";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProfileSelection {
+    Standard(Profile),
+    DockerBuild,
+    GitTransfer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommandProfile {
+    DockerBuild,
+    GitTransfer,
+}
+
 pub(crate) struct Settings {
-    pub(crate) profile: Profile,
+    profile: ProfileSelection,
     pub(crate) summary_lines: usize,
     pub(crate) max_errors: usize,
     pub(crate) max_log_files: usize,
@@ -40,7 +55,7 @@ pub(crate) struct SummarySettings {
 enum CommandLine {
     Run {
         arguments: Vec<OsString>,
-        profile: Profile,
+        profile: ProfileSelection,
     },
     Exit(i32),
 }
@@ -72,6 +87,14 @@ fn set_private_umask() -> libc::mode_t {
     unsafe { libc::umask(0o077) }
 }
 
+fn parse_profile(value: &str) -> Option<ProfileSelection> {
+    match value {
+        "docker-build" => Some(ProfileSelection::DockerBuild),
+        "git-transfer" => Some(ProfileSelection::GitTransfer),
+        _ => Profile::parse(value).map(ProfileSelection::Standard),
+    }
+}
+
 fn read_command_line() -> CommandLine {
     let mut arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let mut profile_value = env::var("LOGCUT_PROFILE").unwrap_or_else(|_| "auto".to_string());
@@ -96,7 +119,7 @@ fn read_command_line() -> CommandLine {
         arguments.remove(0);
     }
 
-    let Some(profile) = Profile::parse(&profile_value) else {
+    let Some(profile) = parse_profile(&profile_value) else {
         eprintln!("Unknown profile: {profile_value}");
         eprintln!("Run 'logcut --help' to see the available profiles.");
         return CommandLine::Exit(2);
@@ -120,30 +143,32 @@ Options:\n\
   -h, --help         Print help\n\
   -V, --version      Print version\n\n\
 Profiles:\n\
-  auto        Detect the profile from command output\n\
-  jest        Summarize Jest test failures\n\
-  vitest      Summarize Vitest test failures\n\
-  prettier    Summarize Prettier formatting failures\n\
-  eslint      Summarize ESLint errors\n\
-  stylelint   Summarize Stylelint errors\n\
-  typescript  Summarize TypeScript compiler errors\n\
-  phpunit     Summarize PHPUnit test failures\n\
-  phpstan     Summarize PHPStan analysis errors\n\
-  php-lint    Summarize PHP syntax errors\n\
-  phpcs       Summarize PHP_CodeSniffer violations\n\
-  phpcbf      Summarize PHP Code Beautifier and Fixer results\n\
-  contract    Summarize contract-check failures\n\
-  vite        Summarize Vite build failures\n\
-  webpack     Summarize webpack build failures\n\
-  composer    Summarize Composer failures\n\
-  playwright  Summarize Playwright test failures\n\
-  generic     Show the tail of the command output\n\n\
+  auto          Detect the profile from command output\n\
+  jest          Summarize Jest test failures\n\
+  vitest        Summarize Vitest test failures\n\
+  prettier      Summarize Prettier formatting failures\n\
+  eslint        Summarize ESLint errors\n\
+  stylelint     Summarize Stylelint errors\n\
+  typescript    Summarize TypeScript compiler errors\n\
+  phpunit       Summarize PHPUnit test failures\n\
+  phpstan       Summarize PHPStan analysis errors\n\
+  php-lint      Summarize PHP syntax errors\n\
+  phpcs         Summarize PHP_CodeSniffer violations\n\
+  phpcbf        Summarize PHP Code Beautifier and Fixer results\n\
+  contract      Summarize contract-check failures\n\
+  vite          Summarize Vite build failures\n\
+  webpack       Summarize webpack build failures\n\
+  composer      Summarize Composer failures\n\
+  playwright    Summarize Playwright test failures\n\
+  docker-build  Summarize Docker build and Docker Compose build results\n\
+  git-transfer  Summarize Git push, pull, and fetch results\n\
+  generic       Show the tail of the command output\n\n\
 logcut options are recognized only before the command. For example,\n\
 'logcut --help' prints this help, while 'logcut npm --help' runs npm --help."
     );
 }
 
-fn settings_from_environment(profile: Profile) -> Settings {
+fn settings_from_environment(profile: ProfileSelection) -> Settings {
     Settings {
         profile,
         summary_lines: positive_setting(
@@ -217,6 +242,7 @@ fn run_command(
         status,
         start.elapsed().as_secs(),
         &label,
+        arguments,
         &log_path,
         settings,
     )
@@ -226,11 +252,12 @@ fn handle_command_result(
     status: i32,
     elapsed: u64,
     label: &str,
+    arguments: &[OsString],
     log_path: &Path,
     settings: &Settings,
 ) -> io::Result<i32> {
     if status == 0 {
-        println!("PASS ({elapsed}s): {label}");
+        print_success(elapsed, label, arguments, log_path, settings);
         let _ = fs::remove_file(log_path);
         return Ok(0);
     }
@@ -245,29 +272,46 @@ fn handle_command_result(
         }
     };
     let clean = normalize_output(raw);
-    let selected = if settings.profile == Profile::Auto {
-        detect_profile(&clean)
-    } else {
-        settings.profile
-    };
-    if successful_nonzero_exit(selected, status, &clean) {
-        println!("PASS ({elapsed}s): {label}");
-        let _ = fs::remove_file(log_path);
-        return Ok(0);
-    }
-
     let summary_settings = SummarySettings {
         summary_lines: settings.summary_lines,
         max_errors: settings.max_errors,
     };
-    let mut summary = summarize(selected, &clean, &summary_settings);
+
+    let command_profile = selected_command_profile(settings.profile, arguments);
+    let (profile_name, mut summary) = match command_profile {
+        Some(CommandProfile::DockerBuild) => (
+            "docker-build",
+            docker_build::summarize(&clean, settings.summary_lines, settings.max_errors),
+        ),
+        Some(CommandProfile::GitTransfer) => (
+            "git-transfer",
+            git_transfer::summarize(&clean, settings.summary_lines, settings.max_errors),
+        ),
+        None => {
+            let selected = match settings.profile {
+                ProfileSelection::Standard(Profile::Auto) => detect_profile(&clean),
+                ProfileSelection::Standard(profile) => profile,
+                ProfileSelection::DockerBuild | ProfileSelection::GitTransfer => unreachable!(),
+            };
+            if successful_nonzero_exit(selected, status, &clean) {
+                println!("PASS ({elapsed}s): {label}");
+                let _ = fs::remove_file(log_path);
+                return Ok(0);
+            }
+            (
+                selected.as_str(),
+                summarize(selected, &clean, &summary_settings),
+            )
+        }
+    };
+
     if !summary.iter().any(|line| !line.trim().is_empty()) {
         summary = summarize(Profile::Generic, &clean, &summary_settings);
     }
     limit_summary(&mut summary, settings.summary_lines);
 
     eprintln!("FAIL ({elapsed}s, exit {status}): {label}");
-    eprintln!("\n----- Failure summary ({}) -----", selected.as_str());
+    eprintln!("\n----- Failure summary ({profile_name}) -----");
     for line in summary {
         eprintln!("{line}");
     }
@@ -279,6 +323,236 @@ fn handle_command_result(
         settings.max_log_files,
     );
     Ok(status)
+}
+
+fn print_success(
+    elapsed: u64,
+    label: &str,
+    arguments: &[OsString],
+    log_path: &Path,
+    settings: &Settings,
+) {
+    println!("PASS ({elapsed}s): {label}");
+
+    let Some(selected) = selected_command_profile(settings.profile, arguments) else {
+        return;
+    };
+    let Ok(raw) = read_log(log_path) else {
+        return;
+    };
+    let clean = normalize_output(raw);
+    let mut summary = match selected {
+        CommandProfile::DockerBuild => {
+            docker_build::summarize_success(&clean, settings.summary_lines)
+        }
+        CommandProfile::GitTransfer => {
+            git_transfer::summarize_success(&clean, settings.summary_lines)
+        }
+    };
+    limit_summary(&mut summary, settings.summary_lines);
+    for line in summary {
+        println!("{line}");
+    }
+}
+
+fn selected_command_profile(
+    configured: ProfileSelection,
+    arguments: &[OsString],
+) -> Option<CommandProfile> {
+    match configured {
+        ProfileSelection::DockerBuild => Some(CommandProfile::DockerBuild),
+        ProfileSelection::GitTransfer => Some(CommandProfile::GitTransfer),
+        ProfileSelection::Standard(Profile::Auto) => command_profile(arguments),
+        ProfileSelection::Standard(_) => None,
+    }
+}
+
+fn command_profile(arguments: &[OsString]) -> Option<CommandProfile> {
+    let executable = Path::new(arguments.first()?)
+        .file_name()
+        .unwrap_or_else(|| OsStr::new(""))
+        .to_str()?;
+    match executable {
+        "docker" if recognizes_docker_build(arguments) => Some(CommandProfile::DockerBuild),
+        "git" if recognizes_git_transfer(arguments) => Some(CommandProfile::GitTransfer),
+        _ => None,
+    }
+}
+
+fn recognizes_docker_build(arguments: &[OsString]) -> bool {
+    let Some(values) = utf8_arguments(arguments) else {
+        return false;
+    };
+    let Some((command_index, command)) = docker_subcommand(&values) else {
+        return false;
+    };
+
+    command == "build"
+        || command == "compose"
+            && compose_subcommand(&values[command_index + 1..])
+                .is_some_and(|value| value == "build")
+}
+
+fn docker_subcommand<'a>(values: &'a [&str]) -> Option<(usize, &'a str)> {
+    let mut index = 1;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(value, "--help" | "-h" | "--version" | "-v") {
+            return None;
+        }
+        if matches!(
+            value,
+            "--config"
+                | "--context"
+                | "--host"
+                | "-H"
+                | "--log-level"
+                | "-l"
+                | "--tlscacert"
+                | "--tlscert"
+                | "--tlskey"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--config",
+                "--context",
+                "--host",
+                "--log-level",
+                "--tlscacert",
+                "--tlscert",
+                "--tlskey",
+            ],
+        ) {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some((index, value));
+    }
+    None
+}
+
+fn compose_subcommand<'a>(values: &'a [&str]) -> Option<&'a str> {
+    let mut index = 0;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(value, "--help" | "-h") {
+            return None;
+        }
+        if matches!(value, "--all-resources" | "--compatibility" | "--dry-run") {
+            index += 1;
+            continue;
+        }
+        if matches!(
+            value,
+            "--ansi"
+                | "--env-file"
+                | "--file"
+                | "-f"
+                | "--parallel"
+                | "--profile"
+                | "--progress"
+                | "--project-directory"
+                | "--project-name"
+                | "-p"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--ansi",
+                "--env-file",
+                "--file",
+                "--parallel",
+                "--profile",
+                "--progress",
+                "--project-directory",
+                "--project-name",
+            ],
+        ) {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            return None;
+        }
+        return Some(value);
+    }
+    None
+}
+
+fn recognizes_git_transfer(arguments: &[OsString]) -> bool {
+    git_subcommand(arguments).is_some_and(|value| matches!(value, "push" | "pull" | "fetch"))
+}
+
+fn git_subcommand(arguments: &[OsString]) -> Option<&str> {
+    let values = utf8_arguments(arguments)?;
+    let mut index = 1;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(
+            value,
+            "--help" | "-h" | "--version" | "--html-path" | "--man-path" | "--info-path"
+        ) {
+            return None;
+        }
+        if matches!(
+            value,
+            "-C" | "-c"
+                | "--config-env"
+                | "--exec-path"
+                | "--git-dir"
+                | "--namespace"
+                | "--super-prefix"
+                | "--work-tree"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--config-env",
+                "--exec-path",
+                "--git-dir",
+                "--namespace",
+                "--super-prefix",
+                "--work-tree",
+            ],
+        ) || value.starts_with("-C") && value.len() > 2
+            || value.starts_with("-c") && value.len() > 2
+        {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some(value);
+    }
+    None
+}
+
+fn utf8_arguments(arguments: &[OsString]) -> Option<Vec<&str>> {
+    arguments.iter().map(|value| value.to_str()).collect()
+}
+
+fn has_option_value(value: &str, options: &[&str]) -> bool {
+    options.iter().any(|option| {
+        value
+            .strip_prefix(option)
+            .is_some_and(|suffix| suffix.starts_with('='))
+    })
 }
 
 fn limit_summary(summary: &mut Vec<String>, maximum: usize) {
@@ -304,6 +578,22 @@ fn positive_setting(name: &str, value: Option<String>, fallback: usize, maximum:
 }
 
 fn command_label(arguments: &[OsString]) -> String {
+    if let Some(profile) = command_profile(arguments) {
+        return match profile {
+            CommandProfile::DockerBuild => {
+                if arguments.iter().any(|value| value == "compose") {
+                    "docker compose build".to_string()
+                } else {
+                    "docker build".to_string()
+                }
+            }
+            CommandProfile::GitTransfer => git_subcommand(arguments).map_or_else(
+                || "git transfer".to_string(),
+                |value| format!("git {value}"),
+            ),
+        };
+    }
+
     let name = Path::new(&arguments[0])
         .file_name()
         .unwrap_or_else(|| OsStr::new(""))

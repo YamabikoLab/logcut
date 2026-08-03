@@ -3,7 +3,7 @@ name = "logcut"
 version = "0.1.11"
 edition = "2021"
 rust-version = "1.70"
-description = "Run commands quietly and show concise failure summaries"
+description = "Reduce AI token usage with concise failure summaries for WordPress development commands."
 license = "GPL-2.0-or-later"
 
 [[bin]]

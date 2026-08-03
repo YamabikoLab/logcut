@@ -4,9 +4,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[allow(dead_code)]
 pub(crate) const LOG_DIRECTORY_MARKER: &str = ".logcut-directory";
+#[allow(dead_code)]
 pub(crate) const LOG_DIRECTORY_MARKER_CONTENT: &str = "logcut log directory\n";
 
+#[allow(dead_code)]
 pub(crate) fn prepare_log_directory(path: &Path) {
     fs::create_dir_all(path).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();

@@ -51,7 +51,11 @@ When a command fails, it reports a concise profile-specific summary. By default,
 - Runs the child command with the caller's original umask.
 - Removes terminal escape sequences and unsafe control characters from summaries.
 - Redacts common authorization headers, token/password assignments, and URL credentials from summaries and retained failure logs.
-- Restricts the log directory to mode `0700` and prunes logs older than one day by default.
+- Creates new log directories with mode `0700`, without changing permissions on existing directories.
+- Marks logcut-owned directories with `.logcut-directory` and prunes logs only after validating the directory and marker.
+- Rejects existing non-empty directories that cannot be confirmed as logcut-owned.
+
+An existing `LOGCUT_LOG_DIRECTORY` can be initialized only when it is empty, owned by the current user, and already has mode `0700`. Existing non-empty directories require a valid `.logcut-directory` marker owned by the current user with mode `0600`. When secure logging cannot be established, logcut uses its existing direct-execution fallback and does not create, modify, or prune files in that directory.
 
 Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
 
@@ -64,11 +68,11 @@ Secret masking is best effort. It covers the documented common key/value, header
 
 ## Install from GitHub Release
 
-Download `SHA256SUMS` and the archive matching your system from the `v0.1.14` GitHub Release:
+Download `SHA256SUMS` and the archive matching your system from the `v0.1.15` GitHub Release:
 
 ```text
-logcut-v0.1.14-x86_64-unknown-linux-gnu.tar.gz
-logcut-v0.1.14-aarch64-unknown-linux-gnu.tar.gz
+logcut-v0.1.15-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.15-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -84,7 +88,7 @@ Verify the downloaded archive, extract it, and install the binary for the curren
 
 ```bash
 sha256sum --ignore-missing --check SHA256SUMS
-tar -xzf logcut-v0.1.14-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.15-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -114,7 +118,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.14 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.15 --locked
 logcut true
 ```
 
@@ -267,7 +271,7 @@ Watch, follow, and interactive modes are not targeted by either profile.
 | `LOGCUT_SUMMARY_LINES` | `40` | Maximum number of summary lines. |
 | `LOGCUT_TAIL_LINES` | `40` | Compatibility fallback used when `LOGCUT_SUMMARY_LINES` is unset. |
 | `LOGCUT_MAX_ERRORS` | `20` | Maximum number of errors for profiles that support an error limit. |
-| `LOGCUT_LOG_DIRECTORY` | `/tmp/logcut-<uid>` | Directory used for retained failure logs. |
+| `LOGCUT_LOG_DIRECTORY` | `/tmp/logcut-<uid>` | Dedicated directory used for retained failure logs. Existing non-empty directories require a valid `.logcut-directory` marker. |
 | `LOGCUT_LOG_MAX_FILES` | `10` | Maximum number of retained logs. |
 | `LOGCUT_LOG_MAX_AGE_DAYS` | `1` | Maximum log age in days. Expired logs are removed on a later `logcut` run. |
 | `LOGCUT_RETAIN_FAILED_LOG` | `1` | Set to `0` to discard the full log after a failure summary. |

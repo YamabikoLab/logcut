@@ -3,6 +3,8 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("logcut currently supports Linux only");
 
+mod docker_build;
+mod git_transfer;
 mod logging;
 mod phpcbf;
 mod playwright;
@@ -19,7 +21,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use summary::{detect_profile, summarize, Profile};
+use summary::{
+    command_profile, detect_profile, recognized_command_label, summarize, summarize_success, Profile,
+};
 
 const USAGE: &str = "Usage: logcut [OPTIONS] <command> [arguments...]";
 
@@ -120,24 +124,26 @@ Options:\n\
   -h, --help         Print help\n\
   -V, --version      Print version\n\n\
 Profiles:\n\
-  auto        Detect the profile from command output\n\
-  jest        Summarize Jest test failures\n\
-  vitest      Summarize Vitest test failures\n\
-  prettier    Summarize Prettier formatting failures\n\
-  eslint      Summarize ESLint errors\n\
-  stylelint   Summarize Stylelint errors\n\
-  typescript  Summarize TypeScript compiler errors\n\
-  phpunit     Summarize PHPUnit test failures\n\
-  phpstan     Summarize PHPStan analysis errors\n\
-  php-lint    Summarize PHP syntax errors\n\
-  phpcs       Summarize PHP_CodeSniffer violations\n\
-  phpcbf      Summarize PHP Code Beautifier and Fixer results\n\
-  contract    Summarize contract-check failures\n\
-  vite        Summarize Vite build failures\n\
-  webpack     Summarize webpack build failures\n\
-  composer    Summarize Composer failures\n\
-  playwright  Summarize Playwright test failures\n\
-  generic     Show the tail of the command output\n\n\
+  auto          Detect the profile from command output\n\
+  jest          Summarize Jest test failures\n\
+  vitest        Summarize Vitest test failures\n\
+  prettier      Summarize Prettier formatting failures\n\
+  eslint        Summarize ESLint errors\n\
+  stylelint     Summarize Stylelint errors\n\
+  typescript    Summarize TypeScript compiler errors\n\
+  phpunit       Summarize PHPUnit test failures\n\
+  phpstan       Summarize PHPStan analysis errors\n\
+  php-lint      Summarize PHP syntax errors\n\
+  phpcs         Summarize PHP_CodeSniffer violations\n\
+  phpcbf        Summarize PHP Code Beautifier and Fixer results\n\
+  contract      Summarize contract-check failures\n\
+  vite          Summarize Vite build failures\n\
+  webpack       Summarize webpack build failures\n\
+  composer      Summarize Composer failures\n\
+  playwright    Summarize Playwright test failures\n\
+  docker-build  Summarize Docker build and Docker Compose build results\n\
+  git-transfer  Summarize Git push, pull, and fetch results\n\
+  generic       Show the tail of the command output\n\n\
 logcut options are recognized only before the command. For example,\n\
 'logcut --help' prints this help, while 'logcut npm --help' runs npm --help."
     );
@@ -217,6 +223,7 @@ fn run_command(
         status,
         start.elapsed().as_secs(),
         &label,
+        arguments,
         &log_path,
         settings,
     )
@@ -226,11 +233,12 @@ fn handle_command_result(
     status: i32,
     elapsed: u64,
     label: &str,
+    arguments: &[OsString],
     log_path: &Path,
     settings: &Settings,
 ) -> io::Result<i32> {
     if status == 0 {
-        println!("PASS ({elapsed}s): {label}");
+        print_success(elapsed, label, arguments, log_path, settings);
         let _ = fs::remove_file(log_path);
         return Ok(0);
     }
@@ -245,11 +253,7 @@ fn handle_command_result(
         }
     };
     let clean = normalize_output(raw);
-    let selected = if settings.profile == Profile::Auto {
-        detect_profile(&clean)
-    } else {
-        settings.profile
-    };
+    let selected = selected_profile(settings.profile, arguments, &clean);
     if successful_nonzero_exit(selected, status, &clean) {
         println!("PASS ({elapsed}s): {label}");
         let _ = fs::remove_file(log_path);
@@ -281,6 +285,50 @@ fn handle_command_result(
     Ok(status)
 }
 
+fn print_success(
+    elapsed: u64,
+    label: &str,
+    arguments: &[OsString],
+    log_path: &Path,
+    settings: &Settings,
+) {
+    let selected = if settings.profile == Profile::Auto {
+        command_profile(arguments)
+    } else {
+        Some(settings.profile)
+    };
+
+    println!("PASS ({elapsed}s): {label}");
+
+    let Some(selected) = selected else {
+        return;
+    };
+    if !matches!(selected, Profile::DockerBuild | Profile::GitTransfer) {
+        return;
+    }
+    let Ok(raw) = read_log(log_path) else {
+        return;
+    };
+    let clean = normalize_output(raw);
+    let summary_settings = SummarySettings {
+        summary_lines: settings.summary_lines,
+        max_errors: settings.max_errors,
+    };
+    let mut summary = summarize_success(selected, &clean, &summary_settings);
+    limit_summary(&mut summary, settings.summary_lines);
+    for line in summary {
+        println!("{line}");
+    }
+}
+
+fn selected_profile(configured: Profile, arguments: &[OsString], output: &str) -> Profile {
+    if configured == Profile::Auto {
+        command_profile(arguments).unwrap_or_else(|| detect_profile(output))
+    } else {
+        configured
+    }
+}
+
 fn limit_summary(summary: &mut Vec<String>, maximum: usize) {
     if summary.len() <= maximum {
         return;
@@ -304,6 +352,10 @@ fn positive_setting(name: &str, value: Option<String>, fallback: usize, maximum:
 }
 
 fn command_label(arguments: &[OsString]) -> String {
+    if let Some(label) = recognized_command_label(arguments) {
+        return label.to_string();
+    }
+
     let name = Path::new(&arguments[0])
         .file_name()
         .unwrap_or_else(|| OsStr::new(""))

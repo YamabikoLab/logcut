@@ -2,9 +2,8 @@
 
 mod common;
 
-use common::TestDir;
+use common::{prepare_log_directory, TestDir};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 fn binary() -> &'static str {
@@ -15,8 +14,7 @@ fn binary() -> &'static str {
 fn log_age_boundary_keeps_newer_logs_and_removes_older_logs() {
     let root = TestDir::new("logcut-retention", "age-boundary");
     let logs = root.join("logs");
-    fs::create_dir_all(&logs).unwrap();
-    fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
+    prepare_log_directory(&logs);
 
     let newer = logs.join("command.newer.log");
     let older = logs.join("command.older.log");

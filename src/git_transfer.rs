@@ -1,24 +1,3 @@
-pub(crate) fn detect(output: &str) -> bool {
-    let lower = output.to_ascii_lowercase();
-    lower.contains("failed to push some refs")
-        || lower.contains("non-fast-forward")
-        || lower.contains("has no upstream branch")
-        || lower.contains("no tracking information")
-        || lower.contains("repository not found")
-        || lower.contains("does not appear to be a git repository")
-        || lower.contains("host key verification failed")
-        || lower.contains("automatic merge failed")
-        || output.lines().any(|line| {
-            let trimmed = line.trim();
-            trimmed == "Everything up-to-date"
-                || trimmed == "Already up to date."
-                || trimmed == "Already up-to-date."
-                || trimmed == "Fast-forward"
-                || trimmed.starts_with("Updating ")
-                || is_ref_update(trimmed)
-        })
-}
-
 pub(crate) fn summarize(output: &str, maximum: usize, max_errors: usize) -> Vec<String> {
     let mut result = Vec::new();
 

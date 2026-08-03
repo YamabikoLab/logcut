@@ -477,10 +477,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "logcut-{name}-{}-{unique}.log",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("logcut-{name}-{}-{unique}.log", std::process::id()))
     }
 
     #[test]
@@ -535,7 +532,9 @@ mod tests {
 
         assert!(redacted.starts_with(b"ordinary\x1b[31m output\n"));
         assert!(redacted.ends_with(b"invalid:\xff\xfe\n"));
-        assert!(!redacted.windows(b"top-secret".len()).any(|value| value == b"top-secret"));
+        assert!(!redacted
+            .windows(b"top-secret".len())
+            .any(|value| value == b"top-secret"));
         assert!(redacted
             .windows(b"[REDACTED]".len())
             .any(|value| value == b"[REDACTED]"));
@@ -550,8 +549,12 @@ mod tests {
         let redacted = fs::read(&path).unwrap();
         let _ = fs::remove_file(&path);
 
-        assert!(!redacted.windows(b"hidden".len()).any(|value| value == b"hidden"));
-        assert!(!redacted.windows(b"value".len()).any(|value| value == b"value"));
+        assert!(!redacted
+            .windows(b"hidden".len())
+            .any(|value| value == b"hidden"));
+        assert!(!redacted
+            .windows(b"value".len())
+            .any(|value| value == b"value"));
         assert!(redacted
             .windows(b"[REDACTED]".len())
             .any(|value| value == b"[REDACTED]"));

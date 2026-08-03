@@ -11,7 +11,7 @@ Release provenance is generated for both published tarballs and `SHA256SUMS` bef
 After downloading a release artifact, verify its provenance with GitHub CLI:
 
 ```bash
-gh attestation verify logcut-v0.1.11-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify logcut-v0.1.14-x86_64-unknown-linux-gnu.tar.gz \
   --repo YamabikoLab/logcut
 ```
 

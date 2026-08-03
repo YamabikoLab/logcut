@@ -102,6 +102,54 @@ fn discard_is_attempted_when_log_reading_fails() {
 }
 
 #[test]
+fn discard_failure_after_summary_is_reported() {
+    let root = TestDir::new("logcut-issue-36", "discard-failure");
+    let logs = root.join("logs");
+    let script = "chmod 500 \"$LOGCUT_LOG_DIRECTORY\"; printf sensitive; exit 37";
+    let output = Command::new(binary())
+        .env("LOGCUT_LOG_DIRECTORY", &logs)
+        .arg("--no-retain-log")
+        .args(["sh", "-c", script])
+        .output()
+        .unwrap();
+    let text = combined(&output);
+
+    fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(output.status.code(), Some(37));
+    assert!(text.contains("failed to discard full log"));
+    assert!(text.contains("Full log may remain:"));
+    assert!(!text.contains("Full log discarded."));
+    assert_eq!(log_files(&logs).len(), 1);
+}
+
+#[test]
+fn discard_failure_after_log_read_failure_is_reported() {
+    let root = TestDir::new("logcut-issue-36", "read-and-discard-failure");
+    let logs = root.join("logs");
+    let script = "chmod 000 \"$LOGCUT_LOG_DIRECTORY\"/command.*.log; chmod 500 \"$LOGCUT_LOG_DIRECTORY\"; exit 41";
+    let output = Command::new(binary())
+        .env("LOGCUT_LOG_DIRECTORY", &logs)
+        .arg("--no-retain-log")
+        .args(["sh", "-c", script])
+        .output()
+        .unwrap();
+    let text = combined(&output);
+
+    fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
+    for path in log_files(&logs) {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    assert_eq!(output.status.code(), Some(41));
+    assert!(text.contains("failure summary could not be generated"));
+    assert!(text.contains("failed to discard full log"));
+    assert!(text.contains("Full log may remain:"));
+    assert!(!text.contains("Full log discarded."));
+    assert_eq!(log_files(&logs).len(), 1);
+}
+
+#[test]
 fn default_log_age_is_one_day() {
     let root = TestDir::new("logcut-issue-36", "default-age");
     let logs = root.join("logs");

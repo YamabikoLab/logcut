@@ -96,7 +96,7 @@ fn docker_copy_source_missing_is_summarized() {
     let output = run_fake(
         "docker",
         &["build", "."],
-        "printf '%s\\n' '#7 [3/4] COPY missing.txt /app/' 'Dockerfile:12' 'ERROR: failed to solve: failed to compute cache key: "/missing.txt": not found' >&2; exit 1",
+        r#"printf '%s\n' '#7 [3/4] COPY missing.txt /app/' 'Dockerfile:12' 'ERROR: failed to solve: failed to compute cache key: "/missing.txt": not found' >&2; exit 1"#,
     );
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(1), "{text}");
@@ -124,7 +124,7 @@ fn docker_compose_identifies_only_failed_service() {
     let output = run_fake(
         "docker",
         &["compose", "build"],
-        "printf '%s\\n' 'web Built' '#12 [worker 5/5] RUN cargo build' 'error: could not compile worker' 'ERROR: service "worker" failed to build' >&2; exit 1",
+        r#"printf '%s\n' 'web Built' '#12 [worker 5/5] RUN cargo build' 'error: could not compile worker' 'ERROR: service "worker" failed to build' >&2; exit 1"#,
     );
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(1), "{text}");

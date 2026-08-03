@@ -1,8 +1,10 @@
+use crate::logging::redact_log_file;
 use libc::{c_int, pid_t};
 use std::ffi::OsString;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::mem;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -99,6 +101,23 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
     }
 }
 
+fn finalize_log(log_path: &Path) {
+    if let Err(error) = redact_log_file(log_path) {
+        let _ = fs::remove_file(log_path);
+        if let Ok(mut log) = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(log_path)
+        {
+            let _ = writeln!(
+                log,
+                "logcut: command output was discarded because secret masking failed: {error}"
+            );
+        }
+    }
+}
+
 pub(crate) fn run_suppressed(
     arguments: &[OsString],
     log_path: &Path,
@@ -140,6 +159,8 @@ pub(crate) fn run_suppressed(
         {
             let mut log = OpenOptions::new().append(true).open(log_path)?;
             writeln!(log, "logcut: failed to execute command: {error}")?;
+            drop(log);
+            finalize_log(log_path);
             return Ok(if error.kind() == io::ErrorKind::NotFound {
                 127
             } else {
@@ -187,16 +208,19 @@ pub(crate) fn run_suppressed(
         thread::sleep(Duration::from_millis(20));
     };
 
-    if forwarded != 0 {
+    let status = if forwarded != 0 {
         if let Some(time) = forwarded_at {
             finish_forwarded_signal(process_group, time, killed);
         }
-        return Ok(128 + forwarded);
-    }
+        128 + forwarded
+    } else {
+        exit_status
+            .code()
+            .unwrap_or_else(|| 128 + exit_status.signal().unwrap_or(1))
+    };
 
-    Ok(exit_status
-        .code()
-        .unwrap_or_else(|| 128 + exit_status.signal().unwrap_or(1)))
+    finalize_log(log_path);
+    Ok(status)
 }
 
 pub(crate) fn run_direct(arguments: &[OsString], original_umask: libc::mode_t) -> io::Result<i32> {

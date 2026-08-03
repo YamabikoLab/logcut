@@ -50,19 +50,14 @@ fn quoted_and_json_secrets_are_redacted_from_summary() {
     let output = run_fake(
         "git",
         &["push"],
-        r#"cat >&2 <<'EOF'
-password="alpha beta" token='gamma delta'
-{"token":"json secret","password": "other secret"}
-fatal: Authentication failed
-EOF
-exit 128"#,
+        r#"printf '%s\n' 'error: password="alpha beta" token='"'"'gamma delta'"'"'' 'error: {"token":"json secret","password": "other secret"}' 'fatal: Authentication failed' >&2; exit 128"#,
     );
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(128), "{text}");
     for secret in ["alpha beta", "gamma delta", "json secret", "other secret"] {
         assert!(!text.contains(secret), "{text}");
     }
-    assert!(text.contains("[REDACTED]"));
+    assert!(text.contains("[REDACTED]"), "{text}");
 }
 
 #[test]

@@ -238,10 +238,7 @@ logcut options are recognized only before the command. For example,\n\
     );
 }
 
-fn settings_from_environment(
-    profile: ProfileSelection,
-    retain_failed_log: bool,
-) -> Settings {
+fn settings_from_environment(profile: ProfileSelection, retain_failed_log: bool) -> Settings {
     Settings {
         profile,
         summary_lines: positive_setting(

@@ -28,11 +28,11 @@ Secret masking is best effort. It covers the documented common key/value, header
 
 ## Install from GitHub Release
 
-Download `SHA256SUMS` and the archive matching your system from the `v0.1.11` GitHub Release:
+Download `SHA256SUMS` and the archive matching your system from the `v0.1.12` GitHub Release:
 
 ```text
-logcut-v0.1.11-x86_64-unknown-linux-gnu.tar.gz
-logcut-v0.1.11-aarch64-unknown-linux-gnu.tar.gz
+logcut-v0.1.12-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.12-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -48,7 +48,7 @@ Verify the downloaded archive, extract it, and install the binary for the curren
 
 ```bash
 sha256sum --ignore-missing --check SHA256SUMS
-tar -xzf logcut-v0.1.11-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.12-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -78,7 +78,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.11 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.12 --locked
 logcut true
 ```
 

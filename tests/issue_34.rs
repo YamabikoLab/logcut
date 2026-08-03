@@ -61,6 +61,20 @@ fn docker_build_success_keeps_image_and_removes_progress() {
 }
 
 #[test]
+fn docker_compose_success_keeps_built_services() {
+    let output = run_fake(
+        "docker",
+        &["compose", "--project-name", "sample", "build", "web", "worker"],
+        "printf '%s\\n' 'web Built' 'worker Built' >&2",
+    );
+    let text = combined(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("Running: docker compose build"));
+    assert!(text.contains("Service built: web"));
+    assert!(text.contains("Service built: worker"));
+}
+
+#[test]
 fn docker_compose_failure_uses_dedicated_summary() {
     let output = run_fake(
         "docker",
@@ -75,6 +89,62 @@ fn docker_compose_failure_uses_dedicated_summary() {
     assert!(text.contains("Dockerfile:18"));
     assert!(text.contains("exit code: 1"));
     assert!(text.contains("Full log:"));
+}
+
+#[test]
+fn docker_copy_source_missing_is_summarized() {
+    let output = run_fake(
+        "docker",
+        &["build", "."],
+        "printf '%s\\n' '#7 [3/4] COPY missing.txt /app/' 'Dockerfile:12' 'ERROR: failed to solve: failed to compute cache key: "/missing.txt": not found' >&2; exit 1",
+    );
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(text.contains("Instruction: COPY missing.txt /app/"));
+    assert!(text.contains("Dockerfile:12"));
+    assert!(text.contains("not found"));
+}
+
+#[test]
+fn docker_package_install_failure_is_summarized() {
+    let output = run_fake(
+        "docker",
+        &["build", "."],
+        "printf '%s\\n' '#6 [2/3] RUN apt-get update && apt-get install -y missing-package' 'E: Unable to locate package missing-package' 'ERROR: failed to solve: process exited with exit code: 100' >&2; exit 100",
+    );
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(100), "{text}");
+    assert!(text.contains("Instruction: RUN apt-get update"));
+    assert!(text.contains("Unable to locate package missing-package"));
+    assert!(text.contains("exit code: 100"));
+}
+
+#[test]
+fn docker_compose_identifies_only_failed_service() {
+    let output = run_fake(
+        "docker",
+        &["compose", "build"],
+        "printf '%s\\n' 'web Built' '#12 [worker 5/5] RUN cargo build' 'error: could not compile worker' 'ERROR: service "worker" failed to build' >&2; exit 1",
+    );
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(text.contains("Service: worker"));
+    assert!(!text.contains("Service: web"));
+}
+
+#[test]
+fn docker_compose_non_build_commands_are_not_misdetected() {
+    for arguments in [
+        vec!["compose", "run", "build"],
+        vec!["compose", "exec", "web", "build"],
+        vec!["compose", "--project-name", "build", "up"],
+    ] {
+        let output = run_fake("docker", &arguments, "printf '%s\\n' 'original output'");
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(!text.contains("Running: docker compose build"), "{text}");
+        assert!(!text.contains("Docker build completed successfully."), "{text}");
+    }
 }
 
 #[test]
@@ -93,17 +163,121 @@ fn git_push_success_keeps_remote_ref_and_commit_range() {
 }
 
 #[test]
+fn git_pull_fast_forward_success_is_summarized() {
+    let output = run_fake(
+        "git",
+        &["pull", "--ff-only"],
+        "printf '%s\\n' 'From github.com:YamabikoLab/logcut' 'Updating 1111111..2222222' 'Fast-forward' >&2",
+    );
+    let text = combined(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("Running: git pull"));
+    assert!(text.contains("Remote: github.com:YamabikoLab/logcut"));
+    assert!(text.contains("Updating 1111111..2222222"));
+    assert!(text.contains("Fast-forward"));
+}
+
+#[test]
+fn git_fetch_with_and_without_updates_is_summarized() {
+    let updated = run_fake(
+        "git",
+        &["fetch", "origin"],
+        "printf '%s\\n' 'From github.com:YamabikoLab/logcut' '   1111111..2222222  main -> origin/main' >&2",
+    );
+    let updated_text = combined(&updated);
+    assert!(updated.status.success(), "{updated_text}");
+    assert!(updated_text.contains("1111111..2222222"));
+
+    let unchanged = run_fake("git", &["fetch", "origin"], ":");
+    let unchanged_text = combined(&unchanged);
+    assert!(unchanged.status.success(), "{unchanged_text}");
+    assert!(unchanged_text.contains("Result: no ref updates reported."));
+}
+
+#[test]
+fn git_non_fast_forward_is_classified() {
+    let output = run_fake(
+        "git",
+        &["push", "origin", "main"],
+        "printf '%s\\n' ' ! [rejected] main -> main (non-fast-forward)' 'error: failed to push some refs' >&2; exit 1",
+    );
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(text.contains("Cause: non-fast-forward update rejected"));
+    assert!(text.contains("[rejected]"));
+}
+
+#[test]
+fn git_missing_remote_is_classified() {
+    let output = run_fake(
+        "git",
+        &["fetch", "missing"],
+        "printf '%s\\n' 'fatal: repository not found' >&2; exit 128",
+    );
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(128), "{text}");
+    assert!(text.contains("Cause: remote repository or ref was not found"));
+}
+
+#[test]
+fn git_hook_failure_is_classified() {
+    let output = run_fake(
+        "git",
+        &["push"],
+        "printf '%s\\n' 'error: pre-push hook failed' >&2; exit 1",
+    );
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(text.contains("Cause: Git hook failed"));
+}
+
+#[test]
+fn git_global_options_are_parsed_before_subcommand() {
+    for arguments in [
+        vec!["-C", "/repo", "push"],
+        vec!["-c", "credential.helper=", "fetch"],
+        vec!["--git-dir=/repo/.git", "--work-tree", "/repo", "pull"],
+    ] {
+        let output = run_fake("git", &arguments, ":");
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(text.contains("Running: git "), "{text}");
+        assert!(!text.contains("Running: git ["), "{text}");
+    }
+}
+
+#[test]
+fn git_help_and_version_are_not_misdetected() {
+    for arguments in [vec!["--help", "push"], vec!["--version", "fetch"]] {
+        let output = run_fake("git", &arguments, "printf '%s\\n' 'git help output'");
+        let text = combined(&output);
+        assert!(output.status.success(), "{text}");
+        assert!(!text.contains("Running: git push"), "{text}");
+        assert!(!text.contains("Running: git fetch"), "{text}");
+        assert!(!text.contains("Result: no ref updates reported."), "{text}");
+    }
+}
+
+#[test]
 fn git_failure_is_classified_and_secrets_are_redacted() {
     let output = run_fake(
         "git",
         &["push"],
-        "printf '%s\\n' 'Authorization: Bearer secret-value' 'fatal: unable to access https://user:password@example.invalid/repo: Authentication failed' >&2; exit 128",
+        "printf '%s\\n' 'Authorization: Bearer secret-value' 'token=first-secret token=second-secret password=third-secret password=fourth-secret' 'fatal: unable to access https://user:password@example.invalid/repo: Authentication failed' >&2; exit 128",
     );
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(128), "{text}");
     assert!(text.contains("Failure summary (git-transfer)"));
     assert!(text.contains("Cause: authentication or repository permission failed"));
-    assert!(!text.contains("secret-value"));
-    assert!(!text.contains("user:password"));
+    for secret in [
+        "secret-value",
+        "first-secret",
+        "second-secret",
+        "third-secret",
+        "fourth-secret",
+        "user:password",
+    ] {
+        assert!(!text.contains(secret), "{text}");
+    }
     assert!(text.contains("[REDACTED]"));
 }

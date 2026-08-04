@@ -137,7 +137,7 @@ fn redact_line(line: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
 
-        let value_end = value_end(line, content_start);
+        let value_end = value_end(line, content_start, allow_structural_boundary);
         output.extend_from_slice(&line[copied_until..value_start]);
         output.extend_from_slice(REDACTED);
         copied_until = value_end;
@@ -229,27 +229,29 @@ fn is_structural_value_boundary(byte: u8) -> bool {
     matches!(byte, b',' | b';' | b'}' | b']' | b')' | b'\'' | b'"')
 }
 
-fn value_end(line: &[u8], content_start: usize) -> usize {
+fn value_end(line: &[u8], content_start: usize, allow_structural_boundary: bool) -> usize {
     let line_end = line[content_start..]
         .iter()
         .position(|byte| matches!(byte, b'\r' | b'\n'))
         .map_or(line.len(), |offset| content_start + offset);
 
-    if let Some(quote @ (b'\'' | b'"')) = line.get(content_start).copied() {
-        let mut index = content_start + 1;
-        let mut escaped = false;
-        while index < line_end {
-            let byte = line[index];
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                return index + 1;
+    if allow_structural_boundary {
+        if let Some(quote @ (b'\'' | b'"')) = line.get(content_start).copied() {
+            let mut index = content_start + 1;
+            let mut escaped = false;
+            while index < line_end {
+                let byte = line[index];
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == quote {
+                    return index + 1;
+                }
+                index += 1;
             }
-            index += 1;
+            return line_end;
         }
-        return line_end;
     }
 
     let mut index = content_start;
@@ -408,6 +410,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(json, b"GOOGLE_CLOUD_KEYFILE_JSON= [REDACTED]\n".to_vec());
+    }
+
+    #[test]
+    fn redacts_quoted_values_through_assignment_boundary() {
+        let concatenated =
+            redact_line(b"OPENAI_API_KEY=\"sk-prefix\"secret-suffix\n").unwrap();
+        assert_eq!(
+            concatenated,
+            b"OPENAI_API_KEY= [REDACTED]\n".to_vec()
+        );
+
+        let quoted = redact_line(b"MY_SECRET=\"secret-value\"\n").unwrap();
+        assert_eq!(quoted, b"MY_SECRET= [REDACTED]\n".to_vec());
+
+        let multiple = redact_line(
+            b"OPENAI_API_KEY=\"first-secret\" OTHER_TOKEN='second-secret'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            multiple,
+            b"OPENAI_API_KEY= [REDACTED] OTHER_TOKEN= [REDACTED]\n".to_vec()
+        );
+
+        let json = redact_line(b"{\"password\":\"one\",\"api-key\":\"two\"}\n").unwrap();
+        assert_eq!(
+            json,
+            b"{\"password\": [REDACTED],\"api-key\": [REDACTED]}\n".to_vec()
+        );
     }
 
     #[test]

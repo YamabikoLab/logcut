@@ -3,9 +3,10 @@ mod secret_masking;
 use libc::{c_int, pid_t};
 use secret_masking::redact_log_file;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::mem;
+use std::os::fd::FromRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
@@ -17,6 +18,8 @@ use std::time::{Duration, Instant};
 const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 const RUNTIME_FAILURE_EXIT_CODE: i32 = 70;
+const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
+const LOG_TRUNCATION_NOTICE: &str = "\n[logcut: command output truncated at 10 MiB]\n";
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
@@ -117,6 +120,49 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
         }
         wait_for_process_group(process_group, SIGNAL_GRACE_PERIOD);
     }
+}
+
+fn output_pipe() -> io::Result<(File, File)> {
+    let mut descriptors = [0; 2];
+    if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let reader = unsafe { File::from_raw_fd(descriptors[0]) };
+    let writer = unsafe { File::from_raw_fd(descriptors[1]) };
+    Ok((reader, writer))
+}
+
+fn capture_output(mut reader: File, log_path: &Path) -> io::Result<bool> {
+    let mut log = OpenOptions::new().append(true).open(log_path)?;
+    let retained_limit = MAX_LOG_BYTES.saturating_sub(LOG_TRUNCATION_NOTICE.len());
+    let mut retained = 0usize;
+    let mut truncated = false;
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+
+        let remaining = retained_limit.saturating_sub(retained);
+        let keep = count.min(remaining);
+        if keep > 0 {
+            log.write_all(&buffer[..keep])?;
+            retained += keep;
+        }
+        if keep < count {
+            truncated = true;
+        }
+    }
+
+    if truncated {
+        log.write_all(LOG_TRUNCATION_NOTICE.as_bytes())?;
+    }
+    Ok(truncated)
 }
 
 fn finalize_log(log_path: &Path) {
@@ -246,9 +292,9 @@ pub(crate) fn run_suppressed(
 ) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     let _signal_handlers = SignalHandlers::install()?;
-    let log = OpenOptions::new().append(true).open(log_path)?;
-    let stdout = Stdio::from(log.try_clone()?);
-    let stderr = Stdio::from(log);
+    let (reader, writer) = output_pipe()?;
+    let stdout = Stdio::from(writer.try_clone()?);
+    let stderr = Stdio::from(writer);
 
     let mut command = Command::new(&arguments[0]);
     command
@@ -290,6 +336,8 @@ pub(crate) fn run_suppressed(
         }
         Err(error) => return Err(error),
     };
+    let log_path_for_capture = log_path.to_path_buf();
+    let capture = thread::spawn(move || capture_output(reader, &log_path_for_capture));
     let process_group = child.id() as pid_t;
     let mut forwarded = 0;
     let mut forwarded_at = None;
@@ -343,6 +391,13 @@ pub(crate) fn run_suppressed(
 
         thread::sleep(Duration::from_millis(20));
     };
+
+    let truncated = capture
+        .join()
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "output capture thread panicked"))??;
+    if truncated {
+        eprintln!("logcut: command output exceeded 10 MiB and was truncated");
+    }
 
     let status = if forwarded != 0 {
         if let Some(time) = forwarded_at {

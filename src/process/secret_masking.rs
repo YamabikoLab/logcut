@@ -297,7 +297,26 @@ fn is_sensitive_key(key: &[u8]) -> bool {
         .any(|candidate| key.eq_ignore_ascii_case(candidate))
         || SENSITIVE_COMPONENTS.iter().any(|component| {
             key.windows(component.len())
-                .any(|window| window.eq_ignore_ascii_case(component))
+                .any(|window| sensitive_component_matches(window, component))
+        })
+}
+
+fn sensitive_component_matches(candidate: &[u8], component: &[u8]) -> bool {
+    candidate
+        .iter()
+        .zip(component.iter())
+        .all(|(&candidate, &component)| {
+            let candidate = if candidate == b'-' {
+                b'_'
+            } else {
+                candidate.to_ascii_uppercase()
+            };
+            let component = if component == b'-' {
+                b'_'
+            } else {
+                component.to_ascii_uppercase()
+            };
+            candidate == component
         })
 }
 
@@ -414,14 +433,20 @@ mod tests {
 
     #[test]
     fn redacts_quoted_values_through_assignment_boundary() {
-        let concatenated = redact_line(b"OPENAI_API_KEY=\"sk-prefix\"secret-suffix\n").unwrap();
-        assert_eq!(concatenated, b"OPENAI_API_KEY= [REDACTED]\n".to_vec());
+        let concatenated =
+            redact_line(b"OPENAI_API_KEY=\"sk-prefix\"secret-suffix\n").unwrap();
+        assert_eq!(
+            concatenated,
+            b"OPENAI_API_KEY= [REDACTED]\n".to_vec()
+        );
 
         let quoted = redact_line(b"MY_SECRET=\"secret-value\"\n").unwrap();
         assert_eq!(quoted, b"MY_SECRET= [REDACTED]\n".to_vec());
 
-        let multiple =
-            redact_line(b"OPENAI_API_KEY=\"first-secret\" OTHER_TOKEN='second-secret'\n").unwrap();
+        let multiple = redact_line(
+            b"OPENAI_API_KEY=\"first-secret\" OTHER_TOKEN='second-secret'\n",
+        )
+        .unwrap();
         assert_eq!(
             multiple,
             b"OPENAI_API_KEY= [REDACTED] OTHER_TOKEN= [REDACTED]\n".to_vec()

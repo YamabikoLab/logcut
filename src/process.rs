@@ -6,12 +6,13 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::mem;
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,7 @@ const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 const RUNTIME_FAILURE_EXIT_CODE: i32 = 70;
 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
+const POST_EXIT_DRAIN_BYTES: usize = 1024 * 1024;
 const LOG_TRUNCATION_NOTICE: &str = "\n[logcut: command output truncated at 10 MiB]\n";
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
@@ -122,6 +124,18 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
     }
 }
 
+fn set_nonblocking(file: &File) -> io::Result<()> {
+    let descriptor = file.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 fn output_pipe() -> io::Result<(File, File)> {
     let mut descriptors = [0; 2];
     if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } == -1 {
@@ -130,23 +144,45 @@ fn output_pipe() -> io::Result<(File, File)> {
 
     let reader = unsafe { File::from_raw_fd(descriptors[0]) };
     let writer = unsafe { File::from_raw_fd(descriptors[1]) };
+    set_nonblocking(&reader)?;
     Ok((reader, writer))
 }
 
-fn capture_output(mut reader: File, log_path: &Path) -> io::Result<bool> {
+fn capture_output(
+    mut reader: File,
+    log_path: &Path,
+    foreground_exited: &AtomicBool,
+) -> io::Result<bool> {
     let mut log = OpenOptions::new().append(true).open(log_path)?;
     let retained_limit = MAX_LOG_BYTES.saturating_sub(LOG_TRUNCATION_NOTICE.len());
     let mut retained = 0usize;
+    let mut drained_after_exit = 0usize;
     let mut truncated = false;
     let mut buffer = [0u8; 8192];
 
     loop {
+        let finishing = foreground_exited.load(Ordering::Acquire);
+        if finishing && drained_after_exit >= POST_EXIT_DRAIN_BYTES {
+            break;
+        }
+
         let count = match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(count) => count,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if finishing {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            }
             Err(error) => return Err(error),
         };
+
+        if finishing {
+            drained_after_exit = drained_after_exit.saturating_add(count);
+        }
 
         let remaining = retained_limit.saturating_sub(retained);
         let keep = count.min(remaining);
@@ -338,11 +374,19 @@ pub(crate) fn run_suppressed(
     };
 
     // `Command` retains the configured `Stdio` handles after `spawn`. Drop it so the
-    // parent closes its copies of the pipe writers and the capture thread can observe EOF.
+    // parent closes its copies of the pipe writers.
     drop(command);
 
+    let foreground_exited = Arc::new(AtomicBool::new(false));
+    let foreground_exited_for_capture = Arc::clone(&foreground_exited);
     let log_path_for_capture = log_path.to_path_buf();
-    let capture = thread::spawn(move || capture_output(reader, &log_path_for_capture));
+    let capture = thread::spawn(move || {
+        capture_output(
+            reader,
+            &log_path_for_capture,
+            &foreground_exited_for_capture,
+        )
+    });
     let process_group = child.id() as pid_t;
     let mut forwarded = 0;
     let mut forwarded_at = None;
@@ -397,6 +441,7 @@ pub(crate) fn run_suppressed(
         thread::sleep(Duration::from_millis(20));
     };
 
+    foreground_exited.store(true, Ordering::Release);
     let truncated = capture
         .join()
         .map_err(|_| io::Error::new(io::ErrorKind::Other, "output capture thread panicked"))??;

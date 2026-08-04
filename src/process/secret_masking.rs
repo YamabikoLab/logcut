@@ -128,8 +128,8 @@ fn redact_line(line: &[u8]) -> Option<Vec<u8>> {
         if content_start >= line.len() {
             break;
         }
-        if line[content_start..].starts_with(REDACTED_MARKER) {
-            scan = content_start + REDACTED_MARKER.len();
+        if let Some(marker_end) = existing_redaction_end(line, content_start) {
+            scan = marker_end;
             continue;
         }
 
@@ -167,6 +167,43 @@ fn key_bounds(line: &[u8], separator: usize) -> Option<(usize, usize)> {
     }
 
     (key_start < key_end).then_some((key_start, key_end))
+}
+
+fn existing_redaction_end(line: &[u8], content_start: usize) -> Option<usize> {
+    if !line[content_start..].starts_with(REDACTED_MARKER) {
+        return None;
+    }
+
+    let marker_end = content_start + REDACTED_MARKER.len();
+    let line_end = line[content_start..]
+        .iter()
+        .position(|byte| matches!(byte, b'\r' | b'\n'))
+        .map_or(line.len(), |offset| content_start + offset);
+
+    if marker_end == line_end || is_structural_value_boundary(line[marker_end]) {
+        return Some(marker_end);
+    }
+    if !line[marker_end].is_ascii_whitespace() {
+        return None;
+    }
+
+    let mut boundary = marker_end;
+    while boundary < line_end && line[boundary].is_ascii_whitespace() {
+        boundary += 1;
+    }
+
+    if boundary == line_end
+        || is_structural_value_boundary(line[boundary])
+        || starts_sensitive_assignment(line, marker_end, line_end)
+    {
+        Some(marker_end)
+    } else {
+        None
+    }
+}
+
+fn is_structural_value_boundary(byte: u8) -> bool {
+    matches!(byte, b',' | b';' | b'}' | b']' | b')' | b'\'' | b'"')
 }
 
 fn value_end(line: &[u8], content_start: usize) -> usize {
@@ -348,6 +385,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(json, b"GOOGLE_CLOUD_KEYFILE_JSON= [REDACTED]\n".to_vec());
+    }
+
+    #[test]
+    fn redacts_values_with_redacted_prefix_and_trailing_secret() {
+        let redacted = redact_line(b"MY_SECRET=[REDACTED] actual-secret\n").unwrap();
+        assert_eq!(redacted, b"MY_SECRET= [REDACTED]\n".to_vec());
     }
 
     #[test]

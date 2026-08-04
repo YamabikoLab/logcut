@@ -375,7 +375,10 @@ mod tests {
 
     #[test]
     fn runtime_failure_is_not_reported_as_child_exit_code_one() {
-        assert_eq!(RunOutcome::RuntimeFailure.exit_code(), RUNTIME_FAILURE_EXIT_CODE);
+        assert_eq!(
+            RunOutcome::RuntimeFailure.exit_code(),
+            RUNTIME_FAILURE_EXIT_CODE
+        );
         assert_ne!(RunOutcome::RuntimeFailure.exit_code(), 1);
     }
 }

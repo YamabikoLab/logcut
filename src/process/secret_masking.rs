@@ -128,7 +128,11 @@ fn redact_line(line: &[u8]) -> Option<Vec<u8>> {
         if content_start >= line.len() {
             break;
         }
-        if let Some(marker_end) = existing_redaction_end(line, content_start) {
+        let allow_structural_boundary =
+            line[separator] == b':' && is_quoted_key(line, key_start, separator);
+        if let Some(marker_end) =
+            existing_redaction_end(line, content_start, allow_structural_boundary)
+        {
             scan = marker_end;
             continue;
         }
@@ -169,7 +173,24 @@ fn key_bounds(line: &[u8], separator: usize) -> Option<(usize, usize)> {
     (key_start < key_end).then_some((key_start, key_end))
 }
 
-fn existing_redaction_end(line: &[u8], content_start: usize) -> Option<usize> {
+fn is_quoted_key(line: &[u8], key_start: usize, separator: usize) -> bool {
+    let mut key_end = separator;
+    while key_end > key_start && line[key_end - 1].is_ascii_whitespace() {
+        key_end -= 1;
+    }
+    if key_end == 0 {
+        return false;
+    }
+
+    let quote = line[key_end - 1];
+    matches!(quote, b'\'' | b'"') && key_start > 0 && line[key_start - 1] == quote
+}
+
+fn existing_redaction_end(
+    line: &[u8],
+    content_start: usize,
+    allow_structural_boundary: bool,
+) -> Option<usize> {
     if !line[content_start..].starts_with(REDACTED_MARKER) {
         return None;
     }
@@ -180,7 +201,9 @@ fn existing_redaction_end(line: &[u8], content_start: usize) -> Option<usize> {
         .position(|byte| matches!(byte, b'\r' | b'\n'))
         .map_or(line.len(), |offset| content_start + offset);
 
-    if marker_end == line_end || is_structural_value_boundary(line[marker_end]) {
+    if marker_end == line_end
+        || (allow_structural_boundary && is_structural_value_boundary(line[marker_end]))
+    {
         return Some(marker_end);
     }
     if !line[marker_end].is_ascii_whitespace() {
@@ -193,7 +216,7 @@ fn existing_redaction_end(line: &[u8], content_start: usize) -> Option<usize> {
     }
 
     if boundary == line_end
-        || is_structural_value_boundary(line[boundary])
+        || (allow_structural_boundary && is_structural_value_boundary(line[boundary]))
         || starts_sensitive_assignment(line, marker_end, line_end)
     {
         Some(marker_end)
@@ -389,8 +412,11 @@ mod tests {
 
     #[test]
     fn redacts_values_with_redacted_prefix_and_trailing_secret() {
-        let redacted = redact_line(b"MY_SECRET=[REDACTED] actual-secret\n").unwrap();
-        assert_eq!(redacted, b"MY_SECRET= [REDACTED]\n".to_vec());
+        let spaced = redact_line(b"MY_SECRET=[REDACTED] actual-secret\n").unwrap();
+        assert_eq!(spaced, b"MY_SECRET= [REDACTED]\n".to_vec());
+
+        let delimited = redact_line(b"MY_SECRET=[REDACTED],actual-secret\n").unwrap();
+        assert_eq!(delimited, b"MY_SECRET= [REDACTED]\n".to_vec());
     }
 
     #[test]

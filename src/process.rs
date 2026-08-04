@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn runtime_failure_notice_does_not_claim_the_command_was_not_executed() {
-        let notice = runtime_failure_notice(&io::Error::other("wait failed"));
+        let notice = runtime_failure_notice(&io::Error::from_raw_os_error(libc::EIO));
 
         assert!(notice.contains("command may have executed"));
         assert!(!notice.contains("command was not executed"));

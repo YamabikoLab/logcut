@@ -16,13 +16,23 @@ use std::time::{Duration, Instant};
 
 const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
+const RUNTIME_FAILURE_EXIT_CODE: i32 = 70;
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RunOutcome {
+enum RunOutcome {
     Exited(i32),
     RuntimeFailure,
+}
+
+impl RunOutcome {
+    fn exit_code(self) -> i32 {
+        match self {
+            Self::Exited(status) => status,
+            Self::RuntimeFailure => RUNTIME_FAILURE_EXIT_CODE,
+        }
+    }
 }
 
 extern "C" fn record_signal(signal: c_int) {
@@ -233,7 +243,7 @@ pub(crate) fn run_suppressed(
     arguments: &[OsString],
     log_path: &Path,
     original_umask: libc::mode_t,
-) -> io::Result<RunOutcome> {
+) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     let _signal_handlers = SignalHandlers::install()?;
     let log = OpenOptions::new().append(true).open(log_path)?;
@@ -272,13 +282,11 @@ pub(crate) fn run_suppressed(
             writeln!(log, "logcut: failed to execute command: {error}")?;
             drop(log);
             finalize_log(log_path);
-            return Ok(RunOutcome::Exited(
-                if error.kind() == io::ErrorKind::NotFound {
-                    127
-                } else {
-                    126
-                },
-            ));
+            return Ok(if error.kind() == io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            });
         }
         Err(error) => return Err(error),
     };
@@ -297,7 +305,8 @@ pub(crate) fn run_suppressed(
                     process_group,
                     log_path,
                     error,
-                ));
+                )
+                .exit_code());
             }
         };
 
@@ -349,7 +358,7 @@ pub(crate) fn run_suppressed(
     if status != 0 {
         finalize_log(log_path);
     }
-    Ok(RunOutcome::Exited(status))
+    Ok(RunOutcome::Exited(status).exit_code())
 }
 
 #[cfg(test)]
@@ -365,7 +374,8 @@ mod tests {
     }
 
     #[test]
-    fn runtime_failure_is_distinct_from_a_child_exit_code() {
-        assert_ne!(RunOutcome::RuntimeFailure, RunOutcome::Exited(1));
+    fn runtime_failure_is_not_reported_as_child_exit_code_one() {
+        assert_eq!(RunOutcome::RuntimeFailure.exit_code(), RUNTIME_FAILURE_EXIT_CODE);
+        assert_ne!(RunOutcome::RuntimeFailure.exit_code(), 1);
     }
 }

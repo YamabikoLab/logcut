@@ -7,6 +7,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::thread;
 use std::time::{Duration, Instant};
 
 fn binary() -> &'static str {
@@ -138,9 +139,10 @@ fn large_output_is_processed_without_changing_the_exit_code() {
 }
 
 #[test]
-fn background_writer_does_not_extend_log_finalization() {
+fn background_writer_does_not_extend_log_finalization_or_get_sigpipe() {
     let root = TestDir::new("logcut-issue-37", "background-writer");
     let bin = root.join("bin");
+    let marker = root.join("background-finished");
     fs::create_dir_all(&bin).unwrap();
     write_fake_command(
         &bin,
@@ -152,6 +154,7 @@ fn background_writer_does_not_extend_log_finalization() {
     i=$((i + 1))
     sleep 0.01
   done
+  printf '%s\n' finished > "$BACKGROUND_MARKER"
 ) &
 printf '%s\n' 'password=foreground-secret'
 exit 7"#,
@@ -162,6 +165,7 @@ exit 7"#,
     let started = Instant::now();
     let output = Command::new(binary())
         .env("PATH", path)
+        .env("BACKGROUND_MARKER", &marker)
         .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
         .arg("background-writer")
         .output()
@@ -173,6 +177,15 @@ exit 7"#,
     assert!(
         elapsed < Duration::from_secs(1),
         "log finalization followed background writes for {elapsed:?}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while !marker.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        marker.exists(),
+        "background writer did not survive logcut exit; output: {text}"
     );
 
     let log = fs::read_to_string(retained_log(&root)).unwrap();

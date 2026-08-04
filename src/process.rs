@@ -336,6 +336,11 @@ pub(crate) fn run_suppressed(
         }
         Err(error) => return Err(error),
     };
+
+    // `Command` retains the configured `Stdio` handles after `spawn`. Drop it so the
+    // parent closes its copies of the pipe writers and the capture thread can observe EOF.
+    drop(command);
+
     let log_path_for_capture = log_path.to_path_buf();
     let capture = thread::spawn(move || capture_output(reader, &log_path_for_capture));
     let process_group = child.id() as pid_t;

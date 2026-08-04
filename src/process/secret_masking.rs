@@ -229,6 +229,10 @@ fn is_structural_value_boundary(byte: u8) -> bool {
     matches!(byte, b',' | b';' | b'}' | b']' | b')' | b'\'' | b'"')
 }
 
+fn is_quoted_value_boundary(byte: u8) -> bool {
+    matches!(byte, b',' | b';' | b'}' | b']' | b')')
+}
+
 fn value_end(line: &[u8], content_start: usize, allow_structural_boundary: bool) -> usize {
     let line_end = line[content_start..]
         .iter()
@@ -246,7 +250,14 @@ fn value_end(line: &[u8], content_start: usize, allow_structural_boundary: bool)
                 } else if byte == b'\\' {
                     escaped = true;
                 } else if byte == quote {
-                    return index + 1;
+                    let mut boundary = index + 1;
+                    while boundary < line_end && line[boundary].is_ascii_whitespace() {
+                        boundary += 1;
+                    }
+                    if boundary == line_end || is_quoted_value_boundary(line[boundary]) {
+                        return index + 1;
+                    }
+                    return line_end;
                 }
                 index += 1;
             }
@@ -450,6 +461,16 @@ mod tests {
         assert_eq!(
             json,
             b"{\"password\": [REDACTED],\"api-key\": [REDACTED]}\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn redacts_suffix_after_quoted_colon_value() {
+        let malformed =
+            redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\"secret-suffix}\n").unwrap();
+        assert_eq!(
+            malformed,
+            b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec()
         );
     }
 

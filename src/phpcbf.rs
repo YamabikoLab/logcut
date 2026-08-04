@@ -44,3 +44,24 @@ fn summary_has_no_remaining_errors(output: &str) -> bool {
 
     found_file
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SUCCESSFUL_SUMMARY: &str = "PHPCBF RESULT SUMMARY\nFILE FIXED REMAINING\nexample.php 2 0\nA TOTAL OF 2 ERRORS WERE FIXED";
+
+    #[test]
+    fn only_exit_code_one_can_be_converted_to_success() {
+        assert!(successful_nonzero_exit(
+            Profile::Phpcbf,
+            1,
+            SUCCESSFUL_SUMMARY
+        ));
+        assert!(!successful_nonzero_exit(
+            Profile::Phpcbf,
+            70,
+            SUCCESSFUL_SUMMARY
+        ));
+    }
+}

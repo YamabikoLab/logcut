@@ -290,9 +290,7 @@ fn value_end(line: &[u8], content_start: usize, allow_structural_boundary: bool)
                     while boundary < line_end && line[boundary].is_ascii_whitespace() {
                         boundary += 1;
                     }
-                    if boundary == line_end
-                        || is_quoted_value_boundary(line, boundary, line_end)
-                    {
+                    if boundary == line_end || is_quoted_value_boundary(line, boundary, line_end) {
                         return index + 1;
                     }
                     return line_end;
@@ -506,17 +504,11 @@ mod tests {
     fn redacts_suffix_after_quoted_colon_value() {
         let concatenated =
             redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\"secret-suffix}\n").unwrap();
-        assert_eq!(
-            concatenated,
-            b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec()
-        );
+        assert_eq!(concatenated, b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec());
 
         let delimited =
             redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\",delimiter-suffix}\n").unwrap();
-        assert_eq!(
-            delimited,
-            b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec()
-        );
+        assert_eq!(delimited, b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec());
 
         let json = redact_line(
             b"{\"OPENAI_API_KEY\":\"first-secret\",\"OTHER_TOKEN\":\"second-secret\"}\n",

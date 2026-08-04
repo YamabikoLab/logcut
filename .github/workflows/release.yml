@@ -1,4 +1,4 @@
-name: Release v0.1.18
+name: Release v0.1.19
 
 on:
   workflow_dispatch:
@@ -7,11 +7,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-v0.1.18
+  group: release-v0.1.19
   cancel-in-progress: false
 
 env:
-  TAG: v0.1.18
+  TAG: v0.1.19
 
 jobs:
   verify:
@@ -192,4 +192,4 @@ jobs:
             dist/SHA256SUMS \
             --target "${GITHUB_SHA}" \
             --title "logcut ${TAG}" \
-            --notes-file .github/release-notes/v0.1.18.md
+            --notes-file .github/release-notes/v0.1.19.md

@@ -174,3 +174,35 @@ fn masks_secret_values_that_begin_with_redacted_marker() {
     assert_eq!(log.matches("[REDACTED]").count(), 2, "{log}");
     assert_eq!(text.matches("[REDACTED]").count(), 2, "{text}");
 }
+
+#[test]
+fn masks_secret_suffix_after_quoted_assignment_value() {
+    let root = TestDir::new("logcut-issue-51", "quoted-suffix");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+
+    write_fake_command(
+        &bin,
+        "quoted-suffix",
+        b"printf '%s\\n' 'OPENAI_API_KEY=\"sk-prefix\"secret-suffix'\nprintf '%s\\n' 'OTHER_TOKEN=\"normal-quoted-secret\"'\nexit 17",
+    );
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("quoted-suffix")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(17), "{text}");
+
+    let log = fs::read_to_string(retained_log(&root)).unwrap();
+    for secret in ["sk-prefix", "secret-suffix", "normal-quoted-secret"] {
+        assert!(!log.contains(secret), "{log}");
+        assert!(!text.contains(secret), "{text}");
+    }
+    assert_eq!(log.matches("[REDACTED]").count(), 2, "{log}");
+    assert_eq!(text.matches("[REDACTED]").count(), 2, "{text}");
+}

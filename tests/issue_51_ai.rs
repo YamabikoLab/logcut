@@ -243,3 +243,40 @@ fn masks_secret_suffix_after_quoted_colon_value() {
     assert_eq!(log.matches("[REDACTED]").count(), 3, "{log}");
     assert_eq!(text.matches("[REDACTED]").count(), 3, "{text}");
 }
+
+#[test]
+fn masks_secret_suffix_after_invalid_quoted_colon_delimiter() {
+    let root = TestDir::new("logcut-issue-51", "quoted-colon-delimiter");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+
+    write_fake_command(
+        &bin,
+        "quoted-colon-delimiter",
+        b"printf '%s\\n' '{\"OPENAI_API_KEY\":\"sk-prefix\",secret-suffix}'\nprintf '%s\\n' '{\"OTHER_TOKEN\":\"normal-secret\",\"API_KEY\":\"second-secret\"}'\nexit 17",
+    );
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("quoted-colon-delimiter")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(17), "{text}");
+
+    let log = fs::read_to_string(retained_log(&root)).unwrap();
+    for secret in [
+        "sk-prefix",
+        "secret-suffix",
+        "normal-secret",
+        "second-secret",
+    ] {
+        assert!(!log.contains(secret), "{log}");
+        assert!(!text.contains(secret), "{text}");
+    }
+    assert_eq!(log.matches("[REDACTED]").count(), 3, "{log}");
+    assert_eq!(text.matches("[REDACTED]").count(), 3, "{text}");
+}

@@ -202,8 +202,7 @@ fn existing_redaction_end(
         .map_or(line.len(), |offset| content_start + offset);
 
     if marker_end == line_end
-        || (allow_structural_boundary
-            && is_quoted_value_boundary(line, marker_end, line_end))
+        || (allow_structural_boundary && is_quoted_value_boundary(line, marker_end, line_end))
     {
         return Some(marker_end);
     }
@@ -525,8 +524,7 @@ mod tests {
         let delimited = redact_line(b"MY_SECRET=[REDACTED],actual-secret\n").unwrap();
         assert_eq!(delimited, b"MY_SECRET= [REDACTED]\n".to_vec());
 
-        let structured =
-            redact_line(b"{\"OPENAI_API_KEY\":[REDACTED],actual-secret}\n").unwrap();
+        let structured = redact_line(b"{\"OPENAI_API_KEY\":[REDACTED],actual-secret}\n").unwrap();
         assert_eq!(structured, b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec());
     }
 

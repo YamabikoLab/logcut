@@ -4,6 +4,7 @@ mod common;
 
 use common::{prepare_log_directory, TestDir};
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -138,19 +139,56 @@ fn generic_fallback_and_numeric_validation_match_quiet_run() {
 }
 
 #[test]
-fn secure_log_failure_runs_command_directly() {
-    let root = temp_dir("direct-fallback");
+fn secure_log_failure_does_not_run_command() {
+    let root = temp_dir("fail-closed");
     let not_directory = root.join("not-directory");
+    let side_effect = root.join("command-ran");
     fs::write(&not_directory, "x").unwrap();
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", not_directory.join("logs"))
-        .args(["sh", "-c", "printf direct-output; exit 23"])
+        .args([
+            "sh",
+            "-c",
+            "printf direct-output; touch \"$1\"; exit 23",
+            "_",
+            side_effect.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     let text = combined(&output);
-    assert_eq!(output.status.code(), Some(23));
-    assert!(text.contains("secure logging is unavailable"));
-    assert!(text.contains("direct-output"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text.contains("secure logging is unavailable"), "{text}");
+    assert!(text.contains("command was not executed"), "{text}");
+    assert!(text.contains("without logcut"), "{text}");
+    assert!(!text.contains("direct-output"), "{text}");
+    assert!(!side_effect.exists());
+}
+
+#[test]
+fn symlink_log_directory_does_not_run_command() {
+    let root = temp_dir("symlink-fail-closed");
+    let target = root.join("target");
+    let logs = root.join("logs");
+    let side_effect = root.join("command-ran");
+    fs::create_dir(&target).unwrap();
+    symlink(&target, &logs).unwrap();
+
+    let output = Command::new(binary())
+        .env("LOGCUT_LOG_DIRECTORY", &logs)
+        .args([
+            "sh",
+            "-c",
+            "touch \"$1\"",
+            "_",
+            side_effect.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text.contains("log directory must not be a symlink"), "{text}");
+    assert!(text.contains("command was not executed"), "{text}");
+    assert!(!side_effect.exists());
 }
 
 #[test]

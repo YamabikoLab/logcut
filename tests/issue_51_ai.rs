@@ -103,3 +103,42 @@ fn masks_ai_coding_tool_and_provider_credentials() {
     }
     assert_eq!(log.matches("[REDACTED]").count(), AI_SECRET_KEYS.len());
 }
+
+#[test]
+fn masks_complete_unquoted_space_and_json_values() {
+    let root = TestDir::new("logcut-issue-51", "complex-values");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+
+    let spaced_secret = "correct horse battery staple";
+    let json_secret = "{\"first\":\"safe\",\"credential\":\"leaky secret\"}";
+    let body = format!(
+        "printf '%s\\n' 'MY_SECRET={spaced_secret}'\nprintf '%s\\n' 'GOOGLE_CLOUD_KEYFILE_JSON={json_secret}'\nexit 17"
+    );
+    write_fake_command(&bin, "complex-values", body.as_bytes());
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("complex-values")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(17), "{text}");
+
+    let log = fs::read_to_string(retained_log(&root)).unwrap();
+    for secret_fragment in [
+        spaced_secret,
+        "horse battery staple",
+        json_secret,
+        "credential",
+        "leaky secret",
+    ] {
+        assert!(!log.contains(secret_fragment), "{log}");
+        assert!(!text.contains(secret_fragment), "{text}");
+    }
+    assert_eq!(log.matches("[REDACTED]").count(), 2, "{log}");
+    assert_eq!(text.matches("[REDACTED]").count(), 2, "{text}");
+}

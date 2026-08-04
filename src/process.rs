@@ -300,11 +300,7 @@ fn wait_for_output_or_control(reader: &File, control: &File) -> io::Result<()> {
     }
 }
 
-fn capture_output(
-    reader: &mut File,
-    control: &mut File,
-    log: &mut File,
-) -> io::Result<bool> {
+fn capture_output(reader: &mut File, control: &mut File, log: &mut File) -> io::Result<bool> {
     let retained_limit = MAX_LOG_BYTES.saturating_sub(LOG_TRUNCATION_NOTICE.len());
     let mut retained = 0usize;
     let mut drained_after_exit = 0usize;

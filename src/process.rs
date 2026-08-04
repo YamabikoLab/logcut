@@ -1,5 +1,6 @@
 mod secret_masking;
 
+use secret_masking::redact_log_file;
 use libc::{c_int, pid_t};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -103,7 +104,7 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
 }
 
 fn finalize_log(log_path: &Path) {
-    match secret_masking::redact_log_file(log_path) {
+    match redact_log_file(log_path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {

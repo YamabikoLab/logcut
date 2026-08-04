@@ -20,7 +20,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
+        run: cargo install cargo-audit --locked
 
       - name: Audit dependencies
         run: cargo audit

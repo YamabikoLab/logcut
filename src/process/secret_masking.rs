@@ -202,7 +202,8 @@ fn existing_redaction_end(
         .map_or(line.len(), |offset| content_start + offset);
 
     if marker_end == line_end
-        || (allow_structural_boundary && is_structural_value_boundary(line[marker_end]))
+        || (allow_structural_boundary
+            && is_quoted_value_boundary(line, marker_end, line_end))
     {
         return Some(marker_end);
     }
@@ -216,17 +217,13 @@ fn existing_redaction_end(
     }
 
     if boundary == line_end
-        || (allow_structural_boundary && is_structural_value_boundary(line[boundary]))
+        || (allow_structural_boundary && is_quoted_value_boundary(line, boundary, line_end))
         || starts_sensitive_assignment(line, marker_end, line_end)
     {
         Some(marker_end)
     } else {
         None
     }
-}
-
-fn is_structural_value_boundary(byte: u8) -> bool {
-    matches!(byte, b',' | b';' | b'}' | b']' | b')' | b'\'' | b'"')
 }
 
 fn is_quoted_value_boundary(line: &[u8], boundary: usize, line_end: usize) -> bool {
@@ -527,6 +524,10 @@ mod tests {
 
         let delimited = redact_line(b"MY_SECRET=[REDACTED],actual-secret\n").unwrap();
         assert_eq!(delimited, b"MY_SECRET= [REDACTED]\n".to_vec());
+
+        let structured =
+            redact_line(b"{\"OPENAI_API_KEY\":[REDACTED],actual-secret}\n").unwrap();
+        assert_eq!(structured, b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec());
     }
 
     #[test]
@@ -540,7 +541,7 @@ mod tests {
 
     #[test]
     fn preserves_existing_redactions() {
-        let line = b"access_token= [REDACTED]\n{\"password\": [REDACTED],\"api-key\": [REDACTED]}\nAuthorization: [REDACTED]\n";
+        let line = b"access_token= [REDACTED]\n{\"password\": [REDACTED],\"api-key\": [REDACTED]}\n{\"OPENAI_API_KEY\":[REDACTED],\"OTHER_TOKEN\":[REDACTED]}\nAuthorization: [REDACTED]\n";
         assert!(redact_line(line).is_none());
     }
 

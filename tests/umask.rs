@@ -56,15 +56,18 @@ fn target_command_uses_callers_umask() {
 }
 
 #[test]
-fn direct_fallback_uses_callers_umask() {
-    let root = temp_dir("umask-direct");
+fn logging_failure_does_not_run_target_command() {
+    let root = temp_dir("umask-fail-closed");
     let logs = root.join("logs");
     let destination = root.join("created.txt");
     fs::write(&logs, b"not a directory").unwrap();
 
     let output = run_with_umask(&logs, &destination, 0o027);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(output.status.success());
-    assert_mode(&destination, 0o640);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("secure logging is unavailable"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!destination.exists());
+    assert!(stderr.contains("secure logging is unavailable"));
+    assert!(stderr.contains("command was not executed"));
+    assert!(stderr.contains("Run the command without logcut"));
 }

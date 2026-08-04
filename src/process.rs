@@ -19,6 +19,12 @@ const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunOutcome {
+    Exited(i32),
+    RuntimeFailure,
+}
+
 extern "C" fn record_signal(signal: c_int) {
     RECEIVED_SIGNAL.store(signal, Ordering::SeqCst);
 }
@@ -161,7 +167,7 @@ fn terminate_after_runtime_failure(
     process_group: pid_t,
     log_path: &Path,
     error: io::Error,
-) -> i32 {
+) -> RunOutcome {
     let mut cleanup_notes = Vec::new();
     let mut safe_to_wait = false;
 
@@ -220,14 +226,14 @@ fn terminate_after_runtime_failure(
 
     let notice = runtime_failure_notice(&error);
     record_runtime_failure(log_path, &notice, &cleanup_notes);
-    1
+    RunOutcome::RuntimeFailure
 }
 
 pub(crate) fn run_suppressed(
     arguments: &[OsString],
     log_path: &Path,
     original_umask: libc::mode_t,
-) -> io::Result<i32> {
+) -> io::Result<RunOutcome> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     let _signal_handlers = SignalHandlers::install()?;
     let log = OpenOptions::new().append(true).open(log_path)?;
@@ -266,11 +272,13 @@ pub(crate) fn run_suppressed(
             writeln!(log, "logcut: failed to execute command: {error}")?;
             drop(log);
             finalize_log(log_path);
-            return Ok(if error.kind() == io::ErrorKind::NotFound {
-                127
-            } else {
-                126
-            });
+            return Ok(RunOutcome::Exited(
+                if error.kind() == io::ErrorKind::NotFound {
+                    127
+                } else {
+                    126
+                },
+            ));
         }
         Err(error) => return Err(error),
     };
@@ -341,7 +349,7 @@ pub(crate) fn run_suppressed(
     if status != 0 {
         finalize_log(log_path);
     }
-    Ok(status)
+    Ok(RunOutcome::Exited(status))
 }
 
 #[cfg(test)]
@@ -354,5 +362,10 @@ mod tests {
 
         assert!(notice.contains("command may have executed"));
         assert!(!notice.contains("command was not executed"));
+    }
+
+    #[test]
+    fn runtime_failure_is_distinct_from_a_child_exit_code() {
+        assert_ne!(RunOutcome::RuntimeFailure, RunOutcome::Exited(1));
     }
 }

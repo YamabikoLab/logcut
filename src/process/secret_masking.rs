@@ -347,16 +347,12 @@ mod tests {
             b"GOOGLE_CLOUD_KEYFILE_JSON={\"first\":\"safe\",\"credential\":\"leaky secret\"}\n",
         )
         .unwrap();
-        assert_eq!(
-            json,
-            b"GOOGLE_CLOUD_KEYFILE_JSON= [REDACTED]\n".to_vec()
-        );
+        assert_eq!(json, b"GOOGLE_CLOUD_KEYFILE_JSON= [REDACTED]\n".to_vec());
     }
 
     #[test]
     fn preserves_following_sensitive_assignment_boundaries() {
-        let redacted =
-            redact_line(b"MY_SECRET=correct horse OTHER_TOKEN=second value\n").unwrap();
+        let redacted = redact_line(b"MY_SECRET=correct horse OTHER_TOKEN=second value\n").unwrap();
         assert_eq!(
             redacted,
             b"MY_SECRET= [REDACTED] OTHER_TOKEN= [REDACTED]\n".to_vec()

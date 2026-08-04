@@ -1,7 +1,7 @@
 mod secret_masking;
 
-use secret_masking::redact_log_file;
 use libc::{c_int, pid_t};
+use secret_masking::redact_log_file;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};

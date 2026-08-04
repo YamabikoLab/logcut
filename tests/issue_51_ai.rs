@@ -79,9 +79,7 @@ fn masks_ai_coding_tool_and_provider_credentials() {
 
     let mut body = String::new();
     for (index, key) in AI_SECRET_KEYS.iter().enumerate() {
-        body.push_str(&format!(
-            "printf '%s\\n' '{key}=ai-secret-{index:02}'\n"
-        ));
+        body.push_str(&format!("printf '%s\\n' '{key}=ai-secret-{index:02}'\n"));
     }
     body.push_str("exit 17");
     write_fake_command(&bin, "ai-credentials", body.as_bytes());

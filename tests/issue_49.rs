@@ -75,18 +75,26 @@ fn existing_directory_permissions_are_not_changed() {
     fs::create_dir_all(&logs).unwrap();
     fs::set_permissions(&logs, fs::Permissions::from_mode(0o755)).unwrap();
     let existing = logs.join("keep.txt");
+    let child_ran = root.join("child-ran");
     fs::write(&existing, "keep").unwrap();
 
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
-        .args(["sh", "-c", "printf direct-output; exit 23"])
+        .arg("sh")
+        .arg("-c")
+        .arg("printf direct-output; touch \"$1\"; exit 23")
+        .arg("sh")
+        .arg(&child_ran)
         .output()
         .unwrap();
     let text = combined(&output);
 
-    assert_eq!(output.status.code(), Some(23));
+    assert_eq!(output.status.code(), Some(1));
     assert!(text.contains("secure logging is unavailable"));
-    assert!(text.contains("direct-output"));
+    assert!(text.contains("command was not executed"));
+    assert!(text.contains("Run the command without logcut"));
+    assert!(!text.contains("direct-output"));
+    assert!(!child_ran.exists());
     assert_eq!(
         fs::metadata(&logs).unwrap().permissions().mode() & 0o777,
         0o755
@@ -102,18 +110,27 @@ fn unmarked_nonempty_directory_is_not_pruned() {
     fs::create_dir_all(&logs).unwrap();
     fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
     let existing = logs.join("command.user-owned.log");
+    let child_ran = root.join("child-ran");
     fs::write(&existing, "do not remove").unwrap();
 
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
         .env("LOGCUT_LOG_MAX_FILES", "1")
-        .args(["sh", "-c", "printf direct-output; exit 29"])
+        .arg("sh")
+        .arg("-c")
+        .arg("printf direct-output; touch \"$1\"; exit 29")
+        .arg("sh")
+        .arg(&child_ran)
         .output()
         .unwrap();
     let text = combined(&output);
 
-    assert_eq!(output.status.code(), Some(29));
+    assert_eq!(output.status.code(), Some(1));
     assert!(text.contains("secure logging is unavailable"));
+    assert!(text.contains("command was not executed"));
+    assert!(text.contains("Run the command without logcut"));
+    assert!(!text.contains("direct-output"));
+    assert!(!child_ran.exists());
     assert_eq!(fs::read_to_string(existing).unwrap(), "do not remove");
     assert_eq!(fs::read_dir(&logs).unwrap().count(), 1);
 }
@@ -125,17 +142,27 @@ fn invalid_marker_is_rejected_without_replacing_it() {
     fs::create_dir_all(&logs).unwrap();
     fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
     let marker = logs.join(LOG_DIRECTORY_MARKER);
+    let child_ran = root.join("child-ran");
     fs::write(&marker, "not logcut\n").unwrap();
     fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
 
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
-        .args(["sh", "-c", "printf direct-output; exit 31"])
+        .arg("sh")
+        .arg("-c")
+        .arg("printf direct-output; touch \"$1\"; exit 31")
+        .arg("sh")
+        .arg(&child_ran)
         .output()
         .unwrap();
+    let text = combined(&output);
 
-    assert_eq!(output.status.code(), Some(31));
-    assert!(combined(&output).contains("secure logging is unavailable"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text.contains("secure logging is unavailable"));
+    assert!(text.contains("command was not executed"));
+    assert!(text.contains("Run the command without logcut"));
+    assert!(!text.contains("direct-output"));
+    assert!(!child_ran.exists());
     assert_eq!(fs::read_to_string(marker).unwrap(), "not logcut\n");
 }
 

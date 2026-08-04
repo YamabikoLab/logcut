@@ -14,7 +14,7 @@ mod summary;
 
 use logging::{normalize_output, prepare_log_file, prune_logs, read_log};
 use phpcbf::successful_nonzero_exit;
-use process::{run_direct, run_suppressed};
+use process::run_suppressed;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -289,6 +289,15 @@ fn current_user_id() -> libc::uid_t {
     unsafe { libc::getuid() }
 }
 
+fn command_setup_error(context: &str, error: io::Error) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!(
+            "{context}: {error}; command was not executed. Run the command without logcut to execute it directly"
+        ),
+    )
+}
+
 fn run_command(
     arguments: &[OsString],
     settings: &Settings,
@@ -299,24 +308,14 @@ fn run_command(
     println!("Running: {label}");
     let _ = io::stdout().flush();
 
-    let log_path = match prepare_log_file(settings) {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!(
-                "logcut: secure logging is unavailable; running command without output suppression"
-            );
-            return run_direct(arguments, original_umask);
-        }
-    };
+    let log_path = prepare_log_file(settings)
+        .map_err(|error| command_setup_error("secure logging is unavailable", error))?;
 
     let status = match run_suppressed(arguments, &log_path, original_umask) {
         Ok(status) => status,
         Err(error) => {
             let _ = fs::remove_file(&log_path);
-            eprintln!(
-                "logcut: command setup failed ({error}); running command without output suppression"
-            );
-            return run_direct(arguments, original_umask);
+            return Err(command_setup_error("command setup failed", error));
         }
     };
 

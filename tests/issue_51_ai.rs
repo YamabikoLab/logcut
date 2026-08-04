@@ -152,7 +152,7 @@ fn masks_secret_values_that_begin_with_redacted_marker() {
     write_fake_command(
         &bin,
         "redacted-prefix",
-        b"printf '%s\\n' 'MY_SECRET=[REDACTED] actual-secret'\nexit 17",
+        b"printf '%s\\n' 'MY_SECRET=[REDACTED] actual-secret'\nprintf '%s\\n' 'OTHER_TOKEN=[REDACTED],delimiter-secret'\nexit 17",
     );
 
     let inherited_path = std::env::var_os("PATH").unwrap_or_default();
@@ -167,8 +167,10 @@ fn masks_secret_values_that_begin_with_redacted_marker() {
     assert_eq!(output.status.code(), Some(17), "{text}");
 
     let log = fs::read_to_string(retained_log(&root)).unwrap();
-    assert!(!log.contains("actual-secret"), "{log}");
-    assert!(!text.contains("actual-secret"), "{text}");
-    assert_eq!(log.matches("[REDACTED]").count(), 1, "{log}");
-    assert_eq!(text.matches("[REDACTED]").count(), 1, "{text}");
+    for secret in ["actual-secret", "delimiter-secret"] {
+        assert!(!log.contains(secret), "{log}");
+        assert!(!text.contains(secret), "{text}");
+    }
+    assert_eq!(log.matches("[REDACTED]").count(), 2, "{log}");
+    assert_eq!(text.matches("[REDACTED]").count(), 2, "{text}");
 }

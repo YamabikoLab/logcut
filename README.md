@@ -50,14 +50,14 @@ When a command fails, it reports a concise profile-specific summary. By default,
 - Forwards `HUP`, `INT`, and `TERM` to the child process group.
 - Runs the child command with the caller's original umask.
 - Removes terminal escape sequences and unsafe control characters from summaries.
-- Redacts common authorization headers, token/password assignments, and URL credentials from summaries and retained failure logs.
+- Redacts common authorization headers, token/password assignments, CI and cloud credential environment variables, and URL credentials from summaries and retained failure logs.
 - Creates new log directories with mode `0700`, without changing permissions on existing directories.
 - Marks logcut-owned directories with `.logcut-directory` and prunes logs only after validating the directory and marker.
 - Rejects existing non-empty directories that cannot be confirmed as logcut-owned.
 
 An existing `LOGCUT_LOG_DIRECTORY` can be initialized only when it is empty, owned by the current user, and already has mode `0700`. Existing non-empty directories require a valid `.logcut-directory` marker owned by the current user with mode `0600`. When secure logging cannot be established, logcut uses its existing direct-execution fallback and does not create, modify, or prune files in that directory.
 
-Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
+Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, environment-variable, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
 
 `--no-retain-log` and `LOGCUT_RETAIN_FAILED_LOG=0` remove the failure log during normal completion after the summary is generated. They do not guarantee that plaintext is never written to disk or that a log cannot remain after forced termination or an operating-system failure.
 
@@ -68,11 +68,11 @@ Secret masking is best effort. It covers the documented common key/value, header
 
 ## Install from GitHub Release
 
-Download `SHA256SUMS` and the archive matching your system from the `v0.1.15` GitHub Release:
+Download `SHA256SUMS` and the archive matching your system from the `v0.1.16` GitHub Release:
 
 ```text
-logcut-v0.1.15-x86_64-unknown-linux-gnu.tar.gz
-logcut-v0.1.15-aarch64-unknown-linux-gnu.tar.gz
+logcut-v0.1.16-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.16-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -88,7 +88,7 @@ Verify the downloaded archive, extract it, and install the binary for the curren
 
 ```bash
 sha256sum --ignore-missing --check SHA256SUMS
-tar -xzf logcut-v0.1.15-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.16-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -118,7 +118,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.15 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.16 --locked
 logcut true
 ```
 
@@ -213,7 +213,7 @@ The default profile is `auto`. Supported profiles are:
 | --- | --- |
 | `auto` | Detect the profile from the command or command output. |
 | `jest` | Summarize Jest test failures. |
-| `vitest` | Summarize Vitest test failures. |
+| `vitest` | Summarize Vitest failures. |
 | `prettier` | Summarize Prettier formatting failures. |
 | `eslint` | Summarize ESLint errors. |
 | `stylelint` | Summarize Stylelint errors. |

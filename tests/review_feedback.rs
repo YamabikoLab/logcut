@@ -186,7 +186,10 @@ fn symlink_log_directory_does_not_run_command() {
         .unwrap();
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(1));
-    assert!(text.contains("log directory must not be a symlink"), "{text}");
+    assert!(
+        text.contains("log directory must not be a symlink"),
+        "{text}"
+    );
     assert!(text.contains("command was not executed"), "{text}");
     assert!(!side_effect.exists());
 }

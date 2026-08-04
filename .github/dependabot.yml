@@ -1,10 +1,7 @@
 version: 2
 updates:
-  - package-ecosystem: github-actions
+  - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
-    groups:
-      github-actions:
-        patterns:
-          - "*"
+    open-pull-requests-limit: 5

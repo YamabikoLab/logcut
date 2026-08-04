@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::TestDir;
+use common::{TestDir, LOG_DIRECTORY_MARKER};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -53,7 +53,8 @@ fn success_suppresses_output_and_removes_log() {
         fs::metadata(&logs).unwrap().permissions().mode() & 0o777,
         0o700
     );
-    assert!(fs::read_dir(logs).unwrap().next().is_none());
+    assert!(logs.join(LOG_DIRECTORY_MARKER).is_file());
+    assert_eq!(fs::read_dir(logs).unwrap().count(), 1);
 }
 
 #[test]

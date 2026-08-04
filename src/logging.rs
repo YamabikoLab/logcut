@@ -1,8 +1,10 @@
 use std::cmp::Reverse;
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -10,6 +12,8 @@ const FAILURE_LOG_TAIL_BYTES: u64 = 1024 * 1024;
 const MAX_REDACTION_LINE_BYTES: usize = 1024 * 1024;
 const LONG_LINE_REDACTION: &[u8] = b"[REDACTED: line exceeded safe masking limit]";
 const SECONDS_PER_DAY: u64 = 86_400;
+const LOG_DIRECTORY_MARKER: &str = ".logcut-directory";
+const LOG_DIRECTORY_MARKER_CONTENT: &[u8] = b"logcut log directory\n";
 const SENSITIVE_KEYS: [&str; 12] = [
     "proxy-authorization",
     "authorization",
@@ -25,29 +29,26 @@ const SENSITIVE_KEYS: [&str; 12] = [
     "token",
 ];
 
+#[derive(Clone, Copy)]
+struct MarkerIdentity {
+    device: u64,
+    inode: u64,
+}
+
 pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf> {
     match fs::symlink_metadata(&settings.log_directory) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "log directory must not be a symlink",
-            ));
+            return Err(unsafe_log_directory("log directory must not be a symlink"));
         }
         Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            create_log_directory(&settings.log_directory)?;
+        }
         Err(error) => return Err(error),
     }
 
-    fs::create_dir_all(&settings.log_directory)?;
-    fs::set_permissions(&settings.log_directory, fs::Permissions::from_mode(0o700))?;
-    let metadata = fs::metadata(&settings.log_directory)?;
-    if !metadata.is_dir() || metadata.uid() != current_user_id() || metadata.mode() & 0o777 != 0o700
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "log directory ownership or permissions are unsafe",
-        ));
-    }
+    validate_log_directory(&settings.log_directory)?;
+    ensure_log_directory_marker(&settings.log_directory)?;
 
     prune_logs(
         &settings.log_directory,
@@ -56,6 +57,154 @@ pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf
     );
 
     create_unique_log(&settings.log_directory)
+}
+
+fn create_log_directory(directory: &Path) -> io::Result<()> {
+    if let Some(parent) = directory
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    create_log_directory_with(directory, |path| builder.create(path))
+}
+
+fn create_log_directory_with<F>(directory: &Path, create: F) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<()>,
+{
+    match create(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_log_directory(directory: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink() {
+        return Err(unsafe_log_directory("log directory must not be a symlink"));
+    }
+    if !metadata.is_dir() {
+        return Err(unsafe_log_directory("log directory must be a directory"));
+    }
+    if metadata.uid() != current_user_id() {
+        return Err(unsafe_log_directory(
+            "log directory must be owned by the current user",
+        ));
+    }
+    if metadata.mode() & 0o777 != 0o700 {
+        return Err(unsafe_log_directory(
+            "log directory permissions must already be 0700",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_log_directory_marker(directory: &Path) -> io::Result<()> {
+    let marker = directory.join(LOG_DIRECTORY_MARKER);
+    match fs::symlink_metadata(&marker) {
+        Ok(_) => validate_log_directory_marker(&marker),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            initialize_log_directory_marker_with(directory, &marker, create_log_directory_marker)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn create_log_directory_marker(marker: &Path) -> io::Result<MarkerIdentity> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(marker)?;
+    let metadata = file.metadata()?;
+    let identity = MarkerIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+
+    let result = file
+        .write_all(LOG_DIRECTORY_MARKER_CONTENT)
+        .and_then(|_| file.sync_all());
+    if let Err(error) = result {
+        drop(file);
+        remove_created_log_directory_marker(marker, identity);
+        return Err(error);
+    }
+
+    Ok(identity)
+}
+
+fn initialize_log_directory_marker_with<F>(
+    directory: &Path,
+    marker: &Path,
+    create_marker: F,
+) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<MarkerIdentity>,
+{
+    let identity = create_marker(marker)?;
+    let result = validate_new_log_directory_marker(directory, marker)
+        .and_then(|_| validate_log_directory_marker(marker));
+    if result.is_err() {
+        remove_created_log_directory_marker(marker, identity);
+    }
+    result
+}
+
+fn validate_new_log_directory_marker(directory: &Path, marker: &Path) -> io::Result<()> {
+    let mut entries = fs::read_dir(directory)?;
+    let marker_is_only_entry = match entries.next().transpose()? {
+        Some(entry) if entry.path() == marker => entries.next().transpose()?.is_none(),
+        _ => false,
+    };
+    if !marker_is_only_entry {
+        return Err(unsafe_log_directory(
+            "existing log directory is not marked as logcut-owned",
+        ));
+    }
+    Ok(())
+}
+
+fn remove_created_log_directory_marker(marker: &Path, identity: MarkerIdentity) {
+    let Ok(metadata) = fs::symlink_metadata(marker) else {
+        return;
+    };
+    if metadata.file_type().is_file()
+        && metadata.dev() == identity.device
+        && metadata.ino() == identity.inode
+    {
+        let _ = fs::remove_file(marker);
+    }
+}
+
+fn validate_log_directory_marker(marker: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(marker)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != current_user_id()
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return Err(unsafe_log_directory(
+            "log directory marker ownership or permissions are unsafe",
+        ));
+    }
+
+    let content = fs::read(marker)?;
+    if content != LOG_DIRECTORY_MARKER_CONTENT {
+        return Err(unsafe_log_directory(
+            "log directory marker content is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn unsafe_log_directory(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, message)
 }
 
 fn current_user_id() -> libc::uid_t {
@@ -206,6 +355,12 @@ fn write_redacted_line<W: Write>(line: &[u8], writer: &mut W) -> io::Result<()> 
 }
 
 pub(crate) fn prune_logs(directory: &Path, max_age_days: u64, max_files: usize) {
+    if validate_log_directory(directory).is_err()
+        || validate_log_directory_marker(&directory.join(LOG_DIRECTORY_MARKER)).is_err()
+    {
+        return;
+    }
+
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
@@ -479,6 +634,46 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("logcut-{name}-{}-{unique}.log", std::process::id()))
+    }
+
+    #[test]
+    fn directory_creation_race_does_not_change_existing_permissions() {
+        let directory = temporary_log("directory-creation-race");
+
+        create_log_directory_with(&directory, |path| {
+            fs::create_dir(path)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+            Err(io::Error::from(io::ErrorKind::AlreadyExists))
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn marker_creation_race_does_not_claim_nonempty_directory() {
+        let directory = temporary_log("marker-creation-race");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let marker = directory.join(LOG_DIRECTORY_MARKER);
+        let competing = directory.join("command.user-owned.log");
+
+        let error = initialize_log_directory_marker_with(&directory, &marker, |path| {
+            let identity = create_log_directory_marker(path)?;
+            fs::write(&competing, "keep")?;
+            Ok(identity)
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&competing).unwrap(), "keep");
+        assert!(!marker.exists());
+        fs::remove_file(competing).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 
     #[test]

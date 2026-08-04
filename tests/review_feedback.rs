@@ -2,9 +2,8 @@
 
 mod common;
 
-use common::TestDir;
+use common::{prepare_log_directory, TestDir};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -158,8 +157,7 @@ fn secure_log_failure_runs_command_directly() {
 fn retained_logs_are_pruned_to_configured_count() {
     let root = temp_dir("retention");
     let logs = root.join("logs");
-    fs::create_dir_all(&logs).unwrap();
-    fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
+    prepare_log_directory(&logs);
     for index in 0..3 {
         fs::write(logs.join(format!("command.old-{index}.log")), "old").unwrap();
         thread::sleep(Duration::from_millis(10));

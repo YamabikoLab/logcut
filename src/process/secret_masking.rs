@@ -414,20 +414,14 @@ mod tests {
 
     #[test]
     fn redacts_quoted_values_through_assignment_boundary() {
-        let concatenated =
-            redact_line(b"OPENAI_API_KEY=\"sk-prefix\"secret-suffix\n").unwrap();
-        assert_eq!(
-            concatenated,
-            b"OPENAI_API_KEY= [REDACTED]\n".to_vec()
-        );
+        let concatenated = redact_line(b"OPENAI_API_KEY=\"sk-prefix\"secret-suffix\n").unwrap();
+        assert_eq!(concatenated, b"OPENAI_API_KEY= [REDACTED]\n".to_vec());
 
         let quoted = redact_line(b"MY_SECRET=\"secret-value\"\n").unwrap();
         assert_eq!(quoted, b"MY_SECRET= [REDACTED]\n".to_vec());
 
-        let multiple = redact_line(
-            b"OPENAI_API_KEY=\"first-secret\" OTHER_TOKEN='second-secret'\n",
-        )
-        .unwrap();
+        let multiple =
+            redact_line(b"OPENAI_API_KEY=\"first-secret\" OTHER_TOKEN='second-secret'\n").unwrap();
         assert_eq!(
             multiple,
             b"OPENAI_API_KEY= [REDACTED] OTHER_TOKEN= [REDACTED]\n".to_vec()

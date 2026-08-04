@@ -29,6 +29,12 @@ const SENSITIVE_KEYS: [&str; 12] = [
     "token",
 ];
 
+#[derive(Clone, Copy)]
+struct MarkerIdentity {
+    device: u64,
+    inode: u64,
+}
+
 pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf> {
     match fs::symlink_metadata(&settings.log_directory) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -103,22 +109,76 @@ fn ensure_log_directory_marker(directory: &Path) -> io::Result<()> {
     match fs::symlink_metadata(&marker) {
         Ok(_) => validate_log_directory_marker(&marker),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if fs::read_dir(directory)?.next().is_some() {
-                return Err(unsafe_log_directory(
-                    "existing log directory is not marked as logcut-owned",
-                ));
-            }
-
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&marker)?;
-            file.write_all(LOG_DIRECTORY_MARKER_CONTENT)?;
-            file.sync_all()?;
-            validate_log_directory_marker(&marker)
+            initialize_log_directory_marker_with(directory, &marker, create_log_directory_marker)
         }
         Err(error) => Err(error),
+    }
+}
+
+fn create_log_directory_marker(marker: &Path) -> io::Result<MarkerIdentity> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(marker)?;
+    let metadata = file.metadata()?;
+    let identity = MarkerIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+
+    let result = file
+        .write_all(LOG_DIRECTORY_MARKER_CONTENT)
+        .and_then(|_| file.sync_all());
+    if let Err(error) = result {
+        drop(file);
+        remove_created_log_directory_marker(marker, identity);
+        return Err(error);
+    }
+
+    Ok(identity)
+}
+
+fn initialize_log_directory_marker_with<F>(
+    directory: &Path,
+    marker: &Path,
+    create_marker: F,
+) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<MarkerIdentity>,
+{
+    let identity = create_marker(marker)?;
+    let result = validate_new_log_directory_marker(directory, marker)
+        .and_then(|_| validate_log_directory_marker(marker));
+    if result.is_err() {
+        remove_created_log_directory_marker(marker, identity);
+    }
+    result
+}
+
+fn validate_new_log_directory_marker(directory: &Path, marker: &Path) -> io::Result<()> {
+    let mut entries = fs::read_dir(directory)?;
+    let marker_is_only_entry = match entries.next().transpose()? {
+        Some(entry) if entry.path() == marker => entries.next().transpose()?.is_none(),
+        _ => false,
+    };
+    if !marker_is_only_entry {
+        return Err(unsafe_log_directory(
+            "existing log directory is not marked as logcut-owned",
+        ));
+    }
+    Ok(())
+}
+
+fn remove_created_log_directory_marker(marker: &Path, identity: MarkerIdentity) {
+    let Ok(metadata) = fs::symlink_metadata(marker) else {
+        return;
+    };
+    if metadata.file_type().is_file()
+        && metadata.dev() == identity.device
+        && metadata.ino() == identity.inode
+    {
+        let _ = fs::remove_file(marker);
     }
 }
 
@@ -591,6 +651,28 @@ mod tests {
             fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
             0o755
         );
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn marker_creation_race_does_not_claim_nonempty_directory() {
+        let directory = temporary_log("marker-creation-race");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let marker = directory.join(LOG_DIRECTORY_MARKER);
+        let competing = directory.join("command.user-owned.log");
+
+        let error = initialize_log_directory_marker_with(&directory, &marker, |path| {
+            let identity = create_log_directory_marker(path)?;
+            fs::write(&competing, "keep")?;
+            Ok(identity)
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&competing).unwrap(), "keep");
+        assert!(!marker.exists());
+        fs::remove_file(competing).unwrap();
         fs::remove_dir(directory).unwrap();
     }
 

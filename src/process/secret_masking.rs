@@ -466,12 +466,8 @@ mod tests {
 
     #[test]
     fn redacts_suffix_after_quoted_colon_value() {
-        let malformed =
-            redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\"secret-suffix}\n").unwrap();
-        assert_eq!(
-            malformed,
-            b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec()
-        );
+        let malformed = redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\"secret-suffix}\n").unwrap();
+        assert_eq!(malformed, b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec());
     }
 
     #[test]

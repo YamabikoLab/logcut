@@ -165,10 +165,15 @@ fn key_bounds(line: &[u8], separator: usize) -> Option<(usize, usize)> {
 }
 
 fn value_end(line: &[u8], content_start: usize) -> usize {
+    let line_end = line[content_start..]
+        .iter()
+        .position(|byte| matches!(byte, b'\r' | b'\n'))
+        .map_or(line.len(), |offset| content_start + offset);
+
     if let Some(quote @ (b'\'' | b'"')) = line.get(content_start).copied() {
         let mut index = content_start + 1;
         let mut escaped = false;
-        while index < line.len() {
+        while index < line_end {
             let byte = line[index];
             if escaped {
                 escaped = false;
@@ -179,17 +184,44 @@ fn value_end(line: &[u8], content_start: usize) -> usize {
             }
             index += 1;
         }
-        return line.len();
+        return line_end;
     }
 
     let mut index = content_start;
-    while index < line.len()
-        && !line[index].is_ascii_whitespace()
-        && !matches!(line[index], b',' | b';' | b'}' | b']')
+    while index < line_end {
+        if line[index].is_ascii_whitespace() {
+            if starts_sensitive_assignment(line, index, line_end) {
+                return index;
+            }
+            while index < line_end && line[index].is_ascii_whitespace() {
+                index += 1;
+            }
+        } else {
+            index += 1;
+        }
+    }
+    line_end
+}
+
+fn starts_sensitive_assignment(line: &[u8], mut index: usize, line_end: usize) -> bool {
+    while index < line_end && line[index].is_ascii_whitespace() {
+        index += 1;
+    }
+
+    let key_start = index;
+    while index < line_end
+        && (line[index].is_ascii_alphanumeric() || matches!(line[index], b'_' | b'-'))
     {
         index += 1;
     }
-    index
+    if key_start == index || !is_sensitive_key(&line[key_start..index]) {
+        return false;
+    }
+
+    while index < line_end && line[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    index < line_end && matches!(line[index], b':' | b'=')
 }
 
 fn is_sensitive_key(key: &[u8]) -> bool {
@@ -298,6 +330,31 @@ mod tests {
                 .filter(|value| *value == b"[REDACTED]")
                 .count(),
             5
+        );
+    }
+
+    #[test]
+    fn redacts_unquoted_values_through_line_end() {
+        let spaced = redact_line(b"MY_SECRET=correct horse battery staple\n").unwrap();
+        assert_eq!(spaced, b"MY_SECRET= [REDACTED]\n".to_vec());
+
+        let json = redact_line(
+            b"GOOGLE_CLOUD_KEYFILE_JSON={\"first\":\"safe\",\"credential\":\"leaky secret\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            json,
+            b"GOOGLE_CLOUD_KEYFILE_JSON= [REDACTED]\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn preserves_following_sensitive_assignment_boundaries() {
+        let redacted =
+            redact_line(b"MY_SECRET=correct horse OTHER_TOKEN=second value\n").unwrap();
+        assert_eq!(
+            redacted,
+            b"MY_SECRET= [REDACTED] OTHER_TOKEN= [REDACTED]\n".to_vec()
         );
     }
 

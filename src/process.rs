@@ -24,6 +24,7 @@ const LOG_TRUNCATION_NOTICE: &str = "\n[logcut: command output truncated at 10 M
 const CAPTURE_OK: u8 = b'0';
 const CAPTURE_TRUNCATED: u8 = b'1';
 const CAPTURE_FAILED: u8 = b'E';
+const INHERITED_READER_MIN_FD: RawFd = 64;
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
@@ -138,13 +139,26 @@ fn set_nonblocking(file: &File) -> io::Result<()> {
     Ok(())
 }
 
-fn set_blocking(file: &File) -> io::Result<()> {
-    let descriptor = file.as_raw_fd();
-    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+fn duplicate_for_inheritance(file: &File) -> io::Result<File> {
+    let descriptor = unsafe {
+        libc::fcntl(
+            file.as_raw_fd(),
+            libc::F_DUPFD_CLOEXEC,
+            INHERITED_READER_MIN_FD,
+        )
+    };
+    if descriptor == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+fn clear_close_on_exec(descriptor: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
     if flags == -1 {
         return Err(io::Error::last_os_error());
     }
-    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags & !libc::O_NONBLOCK) } == -1 {
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -161,24 +175,56 @@ fn pipe_files() -> io::Result<(File, File)> {
     Ok((reader, writer))
 }
 
-fn output_pipe() -> io::Result<(File, File)> {
+fn output_pipe() -> io::Result<(File, File, File)> {
     let (reader, writer) = pipe_files()?;
     set_nonblocking(&reader)?;
-    Ok((reader, writer))
+    let inherited_reader = duplicate_for_inheritance(&reader)?;
+    Ok((reader, inherited_reader, writer))
+}
+
+fn wait_for_capture_process(process_id: pid_t) -> io::Result<()> {
+    let mut status = 0;
+    loop {
+        let result = unsafe { libc::waitpid(process_id, &mut status, 0) };
+        if result == process_id {
+            break;
+        }
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+    }
+
+    if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "output capture process exited abnormally",
+        ))
+    }
 }
 
 struct CaptureController {
     control: File,
     status: File,
+    process_id: pid_t,
+    output_writer: File,
 }
 
 impl CaptureController {
     fn finish(mut self) -> io::Result<bool> {
+        let nonblocking_error = set_nonblocking(&self.output_writer).err();
+        drop(self.output_writer);
+
         let control_error = self.control.write_all(&[1]).err();
         drop(self.control);
 
         let mut response = Vec::new();
-        match self.status.read_to_end(&mut response) {
+        let response_result = match self.status.read_to_end(&mut response) {
             Ok(_) if !response.is_empty() => parse_capture_response(&response),
             Ok(_) => Err(control_error.unwrap_or_else(|| {
                 io::Error::new(
@@ -186,6 +232,18 @@ impl CaptureController {
                     "output capture process exited without reporting a result",
                 )
             })),
+            Err(error) => Err(error),
+        };
+        let wait_result = wait_for_capture_process(self.process_id);
+
+        if let Some(error) = nonblocking_error {
+            return Err(error);
+        }
+        match response_result {
+            Ok(truncated) => {
+                wait_result?;
+                Ok(truncated)
+            }
             Err(error) => Err(error),
         }
     }
@@ -216,8 +274,9 @@ fn close_descriptor_unless_kept(descriptor: RawFd, kept: &[RawFd]) {
 
 fn start_capture_process(
     reader: File,
-    writer_descriptors: &[RawFd],
+    descriptors_to_close: &[RawFd],
     log: File,
+    output_writer: File,
 ) -> io::Result<CaptureController> {
     let (control_reader, control_writer) = pipe_files()?;
     let (status_reader, status_writer) = pipe_files()?;
@@ -231,7 +290,7 @@ fn start_capture_process(
     if process_id == 0 {
         drop(control_writer);
         drop(status_reader);
-        for descriptor in writer_descriptors {
+        for descriptor in descriptors_to_close {
             unsafe {
                 libc::close(*descriptor);
             }
@@ -258,6 +317,8 @@ fn start_capture_process(
     Ok(CaptureController {
         control: control_writer,
         status: status_reader,
+        process_id,
+        output_writer,
     })
 }
 
@@ -366,32 +427,11 @@ fn write_capture_response(mut status: File, result: &io::Result<bool>) {
     let _ = status.write_all(&response);
 }
 
-fn drain_remaining_output(reader: &mut File) {
-    if set_blocking(reader).is_ok() {
-        let _ = io::copy(reader, &mut io::sink());
-        return;
-    }
-
-    let mut buffer = [0u8; 8192];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => break,
-        }
-    }
-}
-
 fn capture_process(mut reader: File, mut control: File, status: File, mut log: File) -> ! {
     let result = capture_output(&mut reader, &mut control, &mut log);
     drop(log);
     drop(control);
     write_capture_response(status, &result);
-    drain_remaining_output(&mut reader);
     unsafe { libc::_exit(0) }
 }
 
@@ -558,11 +598,17 @@ pub(crate) fn run_suppressed(
 ) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     let _signal_handlers = SignalHandlers::install()?;
-    let (reader, writer) = output_pipe()?;
+    let (reader, inherited_reader, writer) = output_pipe()?;
     let stdout_writer = writer.try_clone()?;
-    let writer_descriptors = [writer.as_raw_fd(), stdout_writer.as_raw_fd()];
+    let output_writer = writer.try_clone()?;
+    let descriptors_to_close = [
+        writer.as_raw_fd(),
+        stdout_writer.as_raw_fd(),
+        output_writer.as_raw_fd(),
+        inherited_reader.as_raw_fd(),
+    ];
     let log = OpenOptions::new().append(true).open(log_path)?;
-    let capture = start_capture_process(reader, &writer_descriptors, log)?;
+    let capture = start_capture_process(reader, &descriptors_to_close, log, output_writer)?;
     let stdout = Stdio::from(stdout_writer);
     let stderr = Stdio::from(writer);
 
@@ -575,9 +621,11 @@ pub(crate) fn run_suppressed(
         .stdout(stdout)
         .stderr(stderr);
 
+    let inherited_reader_descriptor = inherited_reader.as_raw_fd();
     unsafe {
         command.pre_exec(move || {
             libc::umask(original_umask);
+            clear_close_on_exec(inherited_reader_descriptor)?;
             if libc::setsid() == -1 {
                 Err(io::Error::last_os_error())
             } else {
@@ -586,7 +634,13 @@ pub(crate) fn run_suppressed(
         });
     }
 
-    let mut child = match command.spawn() {
+    // Descendants keep a read end after capture stops, so their later writes do not
+    // receive SIGPIPE. `CaptureController::finish` switches the shared write end to
+    // nonblocking before the capture process exits, preventing a full abandoned pipe
+    // from blocking a long-lived background process.
+    let spawn_result = command.spawn();
+    drop(inherited_reader);
+    let mut child = match spawn_result {
         Ok(child) => child,
         Err(error)
             if matches!(

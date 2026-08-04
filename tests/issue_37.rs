@@ -61,6 +61,15 @@ fn retained_log(root: &Path) -> PathBuf {
     entries.into_iter().next().unwrap()
 }
 
+fn process_holds_descriptor(process_id: u32, descriptor_target: &Path) -> bool {
+    fs::read_dir(format!("/proc/{process_id}/fd"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| fs::read_link(entry.path()).ok().as_deref() == Some(descriptor_target))
+}
+
 #[test]
 fn masks_stdout_and_stderr_in_the_retained_log_and_summary() {
     let (root, output) = run_fake(
@@ -192,4 +201,76 @@ exit 7"#,
     assert!(!log.contains("foreground-secret"), "{log}");
     assert!(!log.contains("background-secret"), "{log}");
     assert!(log.contains("[REDACTED]"), "{log}");
+}
+
+#[test]
+fn long_lived_background_writer_does_not_leave_capture_process() {
+    let root = TestDir::new("logcut-issue-37", "capture-process");
+    let bin = root.join("bin");
+    let background_pid = root.join("background.pid");
+    fs::create_dir_all(&bin).unwrap();
+    write_fake_command(
+        &bin,
+        "capture-process",
+        br#"(
+  while true; do
+    printf '%s\n' alive
+    sleep 1
+  done
+) &
+printf '%s\n' "$!" > "$BACKGROUND_PID"
+exit 0"#,
+    );
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("BACKGROUND_PID", &background_pid)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("capture-process")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+
+    let process_id = fs::read_to_string(&background_pid)
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    let descriptor_target = fs::read_link(format!("/proc/{process_id}/fd/1")).unwrap();
+    assert!(
+        descriptor_target.to_string_lossy().starts_with("pipe:["),
+        "unexpected background stdout target: {descriptor_target:?}"
+    );
+
+    let capture_processes = fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_string_lossy().parse::<u32>().ok())
+        .filter(|candidate| *candidate != process_id)
+        .filter(|candidate| {
+            fs::read_to_string(format!("/proc/{candidate}/comm"))
+                .ok()
+                .is_some_and(|name| name.trim() == "logcut")
+        })
+        .filter(|candidate| process_holds_descriptor(*candidate, &descriptor_target))
+        .collect::<Vec<_>>();
+
+    let process_group = unsafe { libc::getpgid(process_id as libc::pid_t) };
+    if process_group > 0 {
+        unsafe {
+            libc::kill(-process_group, libc::SIGTERM);
+        }
+    } else {
+        unsafe {
+            libc::kill(process_id as libc::pid_t, libc::SIGTERM);
+        }
+    }
+
+    assert!(
+        capture_processes.is_empty(),
+        "capture processes remained after logcut exit: {capture_processes:?}"
+    );
 }

@@ -229,8 +229,44 @@ fn is_structural_value_boundary(byte: u8) -> bool {
     matches!(byte, b',' | b';' | b'}' | b']' | b')' | b'\'' | b'"')
 }
 
-fn is_quoted_value_boundary(byte: u8) -> bool {
-    matches!(byte, b',' | b';' | b'}' | b']' | b')')
+fn is_quoted_value_boundary(line: &[u8], boundary: usize, line_end: usize) -> bool {
+    match line[boundary] {
+        b',' => starts_quoted_mapping_key(line, boundary + 1, line_end),
+        b'}' | b']' => line[boundary..line_end]
+            .iter()
+            .all(|byte| byte.is_ascii_whitespace() || matches!(byte, b'}' | b']')),
+        _ => false,
+    }
+}
+
+fn starts_quoted_mapping_key(line: &[u8], mut index: usize, line_end: usize) -> bool {
+    while index < line_end && line[index].is_ascii_whitespace() {
+        index += 1;
+    }
+
+    let Some(quote @ (b'\'' | b'"')) = line.get(index).copied() else {
+        return false;
+    };
+    index += 1;
+
+    let mut escaped = false;
+    while index < line_end {
+        let byte = line[index];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            index += 1;
+            while index < line_end && line[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            return index < line_end && line[index] == b':';
+        }
+        index += 1;
+    }
+
+    false
 }
 
 fn value_end(line: &[u8], content_start: usize, allow_structural_boundary: bool) -> usize {
@@ -254,7 +290,9 @@ fn value_end(line: &[u8], content_start: usize, allow_structural_boundary: bool)
                     while boundary < line_end && line[boundary].is_ascii_whitespace() {
                         boundary += 1;
                     }
-                    if boundary == line_end || is_quoted_value_boundary(line[boundary]) {
+                    if boundary == line_end
+                        || is_quoted_value_boundary(line, boundary, line_end)
+                    {
                         return index + 1;
                     }
                     return line_end;
@@ -466,8 +504,28 @@ mod tests {
 
     #[test]
     fn redacts_suffix_after_quoted_colon_value() {
-        let malformed = redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\"secret-suffix}\n").unwrap();
-        assert_eq!(malformed, b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec());
+        let concatenated =
+            redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\"secret-suffix}\n").unwrap();
+        assert_eq!(
+            concatenated,
+            b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec()
+        );
+
+        let delimited =
+            redact_line(b"{\"OPENAI_API_KEY\":\"sk-prefix\",delimiter-suffix}\n").unwrap();
+        assert_eq!(
+            delimited,
+            b"{\"OPENAI_API_KEY\": [REDACTED]\n".to_vec()
+        );
+
+        let json = redact_line(
+            b"{\"OPENAI_API_KEY\":\"first-secret\",\"OTHER_TOKEN\":\"second-secret\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            json,
+            b"{\"OPENAI_API_KEY\": [REDACTED],\"OTHER_TOKEN\": [REDACTED]}\n".to_vec()
+        );
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const REDACTED: &[u8] = b" [REDACTED]";
+const REDACTED_MARKER: &[u8] = b"[REDACTED]";
 const SENSITIVE_COMPONENTS: [&[u8]; 9] = [
     b"TOKEN",
     b"SECRET",
@@ -126,6 +127,10 @@ fn redact_line(line: &[u8]) -> Option<Vec<u8>> {
         }
         if content_start >= line.len() {
             break;
+        }
+        if line[content_start..].starts_with(REDACTED_MARKER) {
+            scan = content_start + REDACTED_MARKER.len();
+            continue;
         }
 
         let value_end = value_end(line, content_start);
@@ -356,6 +361,12 @@ mod tests {
             redacted,
             b"MY_SECRET= [REDACTED] OTHER_TOKEN= [REDACTED]\n".to_vec()
         );
+    }
+
+    #[test]
+    fn preserves_existing_redactions() {
+        let line = b"access_token= [REDACTED]\n{\"password\": [REDACTED],\"api-key\": [REDACTED]}\nAuthorization: [REDACTED]\n";
+        assert!(redact_line(line).is_none());
     }
 
     #[test]

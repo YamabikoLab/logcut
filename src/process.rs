@@ -230,21 +230,3 @@ pub(crate) fn run_suppressed(
     }
     Ok(status)
 }
-
-pub(crate) fn run_direct(arguments: &[OsString], original_umask: libc::mode_t) -> io::Result<i32> {
-    unsafe {
-        libc::umask(original_umask);
-    }
-
-    let error = Command::new(&arguments[0])
-        .args(&arguments[1..])
-        .env("NO_COLOR", "1")
-        .env("FORCE_COLOR", "0")
-        .exec();
-    eprintln!("logcut: failed to execute command: {error}");
-    Ok(if error.kind() == io::ErrorKind::NotFound {
-        127
-    } else {
-        126
-    })
-}

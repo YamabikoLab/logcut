@@ -142,3 +142,33 @@ fn masks_complete_unquoted_space_and_json_values() {
     assert_eq!(log.matches("[REDACTED]").count(), 2, "{log}");
     assert_eq!(text.matches("[REDACTED]").count(), 2, "{text}");
 }
+
+#[test]
+fn masks_secret_values_that_begin_with_redacted_marker() {
+    let root = TestDir::new("logcut-issue-51", "redacted-prefix");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+
+    write_fake_command(
+        &bin,
+        "redacted-prefix",
+        b"printf '%s\\n' 'MY_SECRET=[REDACTED] actual-secret'\nexit 17",
+    );
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("redacted-prefix")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(17), "{text}");
+
+    let log = fs::read_to_string(retained_log(&root)).unwrap();
+    assert!(!log.contains("actual-secret"), "{log}");
+    assert!(!text.contains("actual-secret"), "{text}");
+    assert_eq!(log.matches("[REDACTED]").count(), 1, "{log}");
+    assert_eq!(text.matches("[REDACTED]").count(), 1, "{text}");
+}

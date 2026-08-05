@@ -6,6 +6,7 @@ compile_error!("logcut currently supports Linux only");
 mod docker_build;
 mod git_transfer;
 mod logging;
+mod npm_install;
 mod phpcbf;
 mod playwright;
 mod process;
@@ -30,12 +31,14 @@ enum ProfileSelection {
     Standard(Profile),
     DockerBuild,
     GitTransfer,
+    NpmInstall,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CommandProfile {
     DockerBuild,
     GitTransfer,
+    NpmInstall,
 }
 
 pub(crate) struct Settings {
@@ -150,6 +153,7 @@ fn parse_profile(value: &str) -> Option<ProfileSelection> {
     match value {
         "docker-build" => Some(ProfileSelection::DockerBuild),
         "git-transfer" => Some(ProfileSelection::GitTransfer),
+        "npm-install" => Some(ProfileSelection::NpmInstall),
         _ => Profile::parse(value).map(ProfileSelection::Standard),
     }
 }
@@ -213,7 +217,7 @@ Options:\n\
   -h, --help         Print help\n\
   -V, --version      Print version\n\n\
 Profiles:\n\
-  auto          Detect the profile from command output\n\
+  auto          Detect the profile from the command or command output\n\
   jest          Summarize Jest test failures\n\
   vitest        Summarize Vitest failures\n\
   prettier      Summarize Prettier formatting failures\n\
@@ -230,6 +234,7 @@ Profiles:\n\
   webpack       Summarize webpack build failures\n\
   composer      Summarize Composer failures\n\
   playwright    Summarize Playwright test failures\n\
+  npm-install   Summarize npm dependency installation results\n\
   docker-build  Summarize Docker build and Docker Compose build results\n\
   git-transfer  Summarize Git push, pull, and fetch results\n\
   generic       Show the tail of the command output\n\n\
@@ -373,11 +378,17 @@ fn handle_command_result(
             "git-transfer",
             git_transfer::summarize(&clean, settings.summary_lines, settings.max_errors),
         ),
+        Some(CommandProfile::NpmInstall) => (
+            "npm-install",
+            npm_install::summarize(&clean, settings.summary_lines, settings.max_errors),
+        ),
         None => {
             let selected = match settings.profile {
                 ProfileSelection::Standard(Profile::Auto) => detect_profile(&clean),
                 ProfileSelection::Standard(profile) => profile,
-                ProfileSelection::DockerBuild | ProfileSelection::GitTransfer => unreachable!(),
+                ProfileSelection::DockerBuild
+                | ProfileSelection::GitTransfer
+                | ProfileSelection::NpmInstall => unreachable!(),
             };
             if successful_nonzero_exit(selected, status, &clean) {
                 println!("PASS ({elapsed}s): {label}");
@@ -439,6 +450,9 @@ fn print_success(
         CommandProfile::GitTransfer => {
             git_transfer::summarize_success(&clean, settings.summary_lines)
         }
+        CommandProfile::NpmInstall => {
+            npm_install::summarize_success(&clean, settings.summary_lines)
+        }
     };
     limit_summary(&mut summary, settings.summary_lines);
     for line in summary {
@@ -453,6 +467,7 @@ fn selected_command_profile(
     match configured {
         ProfileSelection::DockerBuild => Some(CommandProfile::DockerBuild),
         ProfileSelection::GitTransfer => Some(CommandProfile::GitTransfer),
+        ProfileSelection::NpmInstall => Some(CommandProfile::NpmInstall),
         ProfileSelection::Standard(Profile::Auto) => command_profile(arguments),
         ProfileSelection::Standard(_) => None,
     }
@@ -466,6 +481,7 @@ fn command_profile(arguments: &[OsString]) -> Option<CommandProfile> {
     match executable {
         "docker" if recognizes_docker_build(arguments) => Some(CommandProfile::DockerBuild),
         "git" if recognizes_git_transfer(arguments) => Some(CommandProfile::GitTransfer),
+        "npm" if recognizes_npm_install(arguments) => Some(CommandProfile::NpmInstall),
         _ => None,
     }
 }
@@ -634,6 +650,63 @@ fn git_subcommand(arguments: &[OsString]) -> Option<&str> {
     None
 }
 
+fn recognizes_npm_install(arguments: &[OsString]) -> bool {
+    npm_subcommand(arguments).is_some_and(|value| matches!(value, "ci" | "install" | "i"))
+}
+
+fn npm_subcommand(arguments: &[OsString]) -> Option<&str> {
+    let values = utf8_arguments(arguments)?;
+    let mut index = 1;
+    while index < values.len() {
+        let value = values[index];
+        if matches!(value, "--help" | "-h" | "--version" | "-v" | "--versions") {
+            return None;
+        }
+        if value == "--" {
+            return None;
+        }
+        if matches!(
+            value,
+            "--cache"
+                | "--globalconfig"
+                | "--heading"
+                | "--loglevel"
+                | "--prefix"
+                | "--registry"
+                | "--scope"
+                | "--userconfig"
+                | "--workspace"
+                | "-w"
+        ) {
+            index += 2;
+            continue;
+        }
+        if has_option_value(
+            value,
+            &[
+                "--cache",
+                "--globalconfig",
+                "--heading",
+                "--loglevel",
+                "--prefix",
+                "--registry",
+                "--scope",
+                "--userconfig",
+                "--workspace",
+            ],
+        ) {
+            index += 1;
+            continue;
+        }
+        if value.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some(value);
+    }
+    None
+}
+
 fn utf8_arguments(arguments: &[OsString]) -> Option<Vec<&str>> {
     arguments.iter().map(|value| value.to_str()).collect()
 }
@@ -682,6 +755,8 @@ fn command_label(arguments: &[OsString]) -> String {
                 || "git transfer".to_string(),
                 |value| format!("git {value}"),
             ),
+            CommandProfile::NpmInstall => npm_subcommand(arguments)
+                .map_or_else(|| "npm install".to_string(), |value| format!("npm {value}")),
         };
     }
 

@@ -14,7 +14,10 @@ mod implementation {
         if result.is_err() {
             let _ = fs::remove_file(&temporary_path);
         }
-        if result.as_ref().is_ok_and(|truncated| *truncated && !already_truncated) {
+        if result
+            .as_ref()
+            .is_ok_and(|truncated| *truncated && !already_truncated)
+        {
             eprintln!("logcut: command output exceeded 10 MiB and was truncated");
         }
         result.map(|_| ())

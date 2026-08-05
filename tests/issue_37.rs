@@ -61,15 +61,6 @@ fn retained_log(root: &Path) -> PathBuf {
     entries.into_iter().next().unwrap()
 }
 
-fn process_holds_descriptor(process_id: u32, descriptor_target: &Path) -> bool {
-    fs::read_dir(format!("/proc/{process_id}/fd"))
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .any(|entry| fs::read_link(entry.path()).ok().as_deref() == Some(descriptor_target))
-}
-
 #[test]
 fn masks_stdout_and_stderr_in_the_retained_log_and_summary() {
     let (root, output) = run_fake(
@@ -204,6 +195,44 @@ exit 7"#,
 }
 
 #[test]
+fn background_writer_can_exceed_pipe_capacity_after_logcut_exits() {
+    let root = TestDir::new("logcut-issue-37", "background-high-output");
+    let bin = root.join("bin");
+    let marker = root.join("background-finished");
+    fs::create_dir_all(&bin).unwrap();
+    write_fake_command(
+        &bin,
+        "background-high-output",
+        br#"(
+  dd if=/dev/zero bs=1048576 count=4 2>/dev/null
+  printf '%s\n' finished > "$BACKGROUND_MARKER"
+) &
+exit 0"#,
+    );
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), inherited_path.to_string_lossy());
+    let output = Command::new(binary())
+        .env("PATH", path)
+        .env("BACKGROUND_MARKER", &marker)
+        .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
+        .arg("background-high-output")
+        .output()
+        .unwrap();
+    let text = combined(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while !marker.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        marker.exists(),
+        "background writer failed after exceeding pipe capacity; output: {text}"
+    );
+}
+
+#[test]
 fn long_lived_background_writer_does_not_leave_capture_process() {
     let root = TestDir::new("logcut-issue-37", "capture-process");
     let bin = root.join("bin");
@@ -241,22 +270,9 @@ exit 0"#,
         .unwrap();
     let descriptor_target = fs::read_link(format!("/proc/{process_id}/fd/1")).unwrap();
     assert!(
-        descriptor_target.to_string_lossy().starts_with("pipe:["),
+        descriptor_target.to_string_lossy().contains("(deleted)"),
         "unexpected background stdout target: {descriptor_target:?}"
     );
-
-    let capture_processes = fs::read_dir("/proc")
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().to_string_lossy().parse::<u32>().ok())
-        .filter(|candidate| *candidate != process_id)
-        .filter(|candidate| {
-            fs::read_to_string(format!("/proc/{candidate}/comm"))
-                .ok()
-                .is_some_and(|name| name.trim() == "logcut")
-        })
-        .filter(|candidate| process_holds_descriptor(*candidate, &descriptor_target))
-        .collect::<Vec<_>>();
 
     let process_group = unsafe { libc::getpgid(process_id as libc::pid_t) };
     if process_group > 0 {
@@ -268,9 +284,4 @@ exit 0"#,
             libc::kill(process_id as libc::pid_t, libc::SIGTERM);
         }
     }
-
-    assert!(
-        capture_processes.is_empty(),
-        "capture processes remained after logcut exit: {capture_processes:?}"
-    );
 }

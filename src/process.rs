@@ -382,8 +382,8 @@ fn capture_process(mut reader: File, mut control: File, status: File, mut log: F
     unsafe { libc::_exit(0) }
 }
 
-fn finalize_log(log_path: &Path) {
-    match redact_log_file(log_path) {
+fn finalize_log(log_path: &Path, already_truncated: bool) {
+    match redact_log_file(log_path, already_truncated) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -438,7 +438,12 @@ fn finish_capture_result(status: i32, result: io::Result<bool>, log_path: &Path)
     status
 }
 
-fn record_runtime_failure(log_path: &Path, notice: &str, cleanup_notes: &[String]) {
+fn record_runtime_failure(
+    log_path: &Path,
+    notice: &str,
+    cleanup_notes: &[String],
+    already_truncated: bool,
+) {
     eprintln!("{notice}");
     for note in cleanup_notes {
         eprintln!("logcut: {note}");
@@ -461,7 +466,7 @@ fn record_runtime_failure(log_path: &Path, notice: &str, cleanup_notes: &[String
         ),
     }
 
-    finalize_log(log_path);
+    finalize_log(log_path, already_truncated);
 }
 
 fn terminate_after_runtime_failure(
@@ -470,6 +475,7 @@ fn terminate_after_runtime_failure(
     log_path: &Path,
     error: io::Error,
     capture_error: Option<io::Error>,
+    capture_truncated: bool,
 ) -> RunOutcome {
     let mut cleanup_notes = Vec::new();
     let mut safe_to_wait = false;
@@ -534,7 +540,12 @@ fn terminate_after_runtime_failure(
     }
 
     let notice = runtime_failure_notice(&error);
-    record_runtime_failure(log_path, &notice, &cleanup_notes);
+    record_runtime_failure(
+        log_path,
+        &notice,
+        &cleanup_notes,
+        capture_truncated,
+    );
     RunOutcome::RuntimeFailure
 }
 
@@ -582,24 +593,28 @@ pub(crate) fn run_suppressed(
             ) =>
         {
             drop(command);
-            let capture_result = capture.finish();
-            if let Err(capture_error) = capture_result {
-                let status = if error.kind() == io::ErrorKind::NotFound {
-                    127
-                } else {
-                    126
-                };
-                record_capture_failure(log_path, &capture_error, status);
-            }
-            let mut log = OpenOptions::new().append(true).open(log_path)?;
-            writeln!(log, "logcut: failed to execute command: {error}")?;
-            drop(log);
-            finalize_log(log_path);
-            return Ok(if error.kind() == io::ErrorKind::NotFound {
+            let status = if error.kind() == io::ErrorKind::NotFound {
                 127
             } else {
                 126
-            });
+            };
+            let capture_truncated = match capture.finish() {
+                Ok(truncated) => {
+                    if truncated {
+                        eprintln!("logcut: command output exceeded 10 MiB and was truncated");
+                    }
+                    truncated
+                }
+                Err(capture_error) => {
+                    record_capture_failure(log_path, &capture_error, status);
+                    false
+                }
+            };
+            let mut log = OpenOptions::new().append(true).open(log_path)?;
+            writeln!(log, "logcut: failed to execute command: {error}")?;
+            drop(log);
+            finalize_log(log_path, capture_truncated);
+            return Ok(status);
         }
         Err(error) => {
             drop(command);
@@ -622,13 +637,19 @@ pub(crate) fn run_suppressed(
             Ok(status) => status,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
-                let capture_error = capture.finish().err();
+                let capture_result = capture.finish();
+                let capture_truncated = capture_result.as_ref().copied().unwrap_or(false);
+                if capture_truncated {
+                    eprintln!("logcut: command output exceeded 10 MiB and was truncated");
+                }
+                let capture_error = capture_result.err();
                 return Ok(terminate_after_runtime_failure(
                     &mut child,
                     process_group,
                     log_path,
                     error,
                     capture_error,
+                    capture_truncated,
                 )
                 .exit_code());
             }
@@ -669,6 +690,7 @@ pub(crate) fn run_suppressed(
     };
 
     let capture_result = capture.finish();
+    let capture_truncated = capture_result.as_ref().copied().unwrap_or(false);
     let status = if forwarded != 0 {
         if let Some(time) = forwarded_at {
             finish_forwarded_signal(process_group, time, killed);
@@ -682,7 +704,7 @@ pub(crate) fn run_suppressed(
     let status = finish_capture_result(status, capture_result, log_path);
 
     if status != 0 {
-        finalize_log(log_path);
+        finalize_log(log_path, capture_truncated);
     }
     Ok(RunOutcome::Exited(status).exit_code())
 }

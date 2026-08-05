@@ -138,18 +138,6 @@ fn set_nonblocking(file: &File) -> io::Result<()> {
     Ok(())
 }
 
-fn set_blocking(file: &File) -> io::Result<()> {
-    let descriptor = file.as_raw_fd();
-    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
-    if flags == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags & !libc::O_NONBLOCK) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
 fn pipe_files() -> io::Result<(File, File)> {
     let mut descriptors = [0; 2];
     if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } == -1 {
@@ -168,6 +156,7 @@ fn output_pipe() -> io::Result<(File, File)> {
 }
 
 struct CaptureController {
+    process_id: pid_t,
     control: File,
     status: File,
 }
@@ -178,7 +167,7 @@ impl CaptureController {
         drop(self.control);
 
         let mut response = Vec::new();
-        match self.status.read_to_end(&mut response) {
+        let result = match self.status.read_to_end(&mut response) {
             Ok(_) if !response.is_empty() => parse_capture_response(&response),
             Ok(_) => Err(control_error.unwrap_or_else(|| {
                 io::Error::new(
@@ -187,7 +176,24 @@ impl CaptureController {
                 )
             })),
             Err(error) => Err(error),
+        };
+        drop(self.status);
+
+        loop {
+            if unsafe { libc::waitpid(self.process_id, std::ptr::null_mut(), 0) } >= 0 {
+                break;
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            if error.raw_os_error() != Some(libc::ECHILD) {
+                return Err(error);
+            }
+            break;
         }
+
+        result
     }
 }
 
@@ -256,6 +262,7 @@ fn start_capture_process(
     drop(log);
 
     Ok(CaptureController {
+        process_id,
         control: control_writer,
         status: status_reader,
     })
@@ -366,32 +373,12 @@ fn write_capture_response(mut status: File, result: &io::Result<bool>) {
     let _ = status.write_all(&response);
 }
 
-fn drain_remaining_output(reader: &mut File) {
-    if set_blocking(reader).is_ok() {
-        let _ = io::copy(reader, &mut io::sink());
-        return;
-    }
-
-    let mut buffer = [0u8; 8192];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => break,
-        }
-    }
-}
-
 fn capture_process(mut reader: File, mut control: File, status: File, mut log: File) -> ! {
     let result = capture_output(&mut reader, &mut control, &mut log);
+    drop(reader);
     drop(log);
     drop(control);
     write_capture_response(status, &result);
-    drain_remaining_output(&mut reader);
     unsafe { libc::_exit(0) }
 }
 

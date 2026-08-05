@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::TestDir;
+use common::{prepare_log_directory, TestDir};
 use std::fs;
 use std::process::Command;
 use std::thread;
@@ -36,10 +36,18 @@ fn directory_bytes(directory: &std::path::Path) -> u64 {
         .sum()
 }
 
+fn descriptor_bytes(process_id: libc::pid_t, descriptor: u8) -> u64 {
+    fs::metadata(format!("/proc/{process_id}/fd/{descriptor}"))
+        .unwrap()
+        .len()
+}
+
 #[test]
 fn oversized_output_is_truncated_without_changing_exit_code() {
     let root = TestDir::new("logcut-issue-52", "truncate");
     let logs = root.join("logs");
+    prepare_log_directory(&logs);
+
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
         .args([
@@ -67,18 +75,21 @@ fn oversized_output_is_truncated_without_changing_exit_code() {
 fn capture_storage_stays_bounded_while_the_foreground_command_is_running() {
     let root = TestDir::new("logcut-issue-52", "running-storage");
     let logs = root.join("logs");
+    let foreground_pid = root.join("foreground.pid");
     let ready = root.join("ready");
     let release = root.join("release");
-    fs::create_dir_all(&logs).unwrap();
+    prepare_log_directory(&logs);
+    let baseline = directory_bytes(&logs);
 
     let mut child = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
+        .env("FOREGROUND_PID", &foreground_pid)
         .env("READY", &ready)
         .env("RELEASE", &release)
         .args([
             "sh",
             "-c",
-            "yes x | head -c 33554432; : > \"$READY\"; while [ ! -e \"$RELEASE\" ]; do sleep 0.02; done; exit 52",
+            "echo $$ > \"$FOREGROUND_PID\"; yes x | head -c 33554432; : > \"$READY\"; while [ ! -e \"$RELEASE\" ]; do sleep 0.02; done; exit 52",
         ])
         .spawn()
         .unwrap();
@@ -87,13 +98,23 @@ fn capture_storage_stays_bounded_while_the_foreground_command_is_running() {
     while !ready.exists() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
     }
-    assert!(ready.exists(), "foreground command did not reach the inspection point");
-    assert!(directory_bytes(&logs) <= MAX_LOG_BYTES);
+    assert!(
+        ready.exists(),
+        "foreground command did not reach the inspection point"
+    );
+
+    let process_id = fs::read_to_string(&foreground_pid)
+        .unwrap()
+        .trim()
+        .parse::<libc::pid_t>()
+        .unwrap();
+    assert!(descriptor_bytes(process_id, 1) <= MAX_LOG_BYTES);
+    assert!(directory_bytes(&logs).saturating_sub(baseline) <= MAX_LOG_BYTES);
 
     fs::write(&release, b"go").unwrap();
     let status = child.wait().unwrap();
     assert_eq!(status.code(), Some(52));
-    assert!(directory_bytes(&logs) <= MAX_LOG_BYTES);
+    assert!(directory_bytes(&logs).saturating_sub(baseline) <= MAX_LOG_BYTES);
 }
 
 #[test]
@@ -101,7 +122,8 @@ fn long_lived_background_output_does_not_grow_disk_storage() {
     let root = TestDir::new("logcut-issue-52", "background-storage");
     let logs = root.join("logs");
     let background_pid = root.join("background.pid");
-    fs::create_dir_all(&logs).unwrap();
+    prepare_log_directory(&logs);
+    let baseline = directory_bytes(&logs);
 
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
@@ -109,7 +131,7 @@ fn long_lived_background_output_does_not_grow_disk_storage() {
         .args([
             "sh",
             "-c",
-            "(while true; do yes background | head -c 1048576; done) & echo $! > \"$BACKGROUND_PID\"; exit 52",
+            "yes background & echo $! > \"$BACKGROUND_PID\"; exit 52",
         ])
         .output()
         .unwrap();
@@ -120,10 +142,11 @@ fn long_lived_background_output_does_not_grow_disk_storage() {
         .trim()
         .parse::<libc::pid_t>()
         .unwrap();
-    let before = directory_bytes(&logs);
+    let before = directory_bytes(&logs).saturating_sub(baseline);
     thread::sleep(Duration::from_millis(500));
-    let after = directory_bytes(&logs);
+    let after = directory_bytes(&logs).saturating_sub(baseline);
 
+    assert!(descriptor_bytes(process_id, 1) <= MAX_LOG_BYTES);
     assert!(before <= MAX_LOG_BYTES);
     assert!(after <= MAX_LOG_BYTES);
     assert_eq!(after, before, "background output continued consuming disk space");

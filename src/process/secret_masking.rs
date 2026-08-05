@@ -3,7 +3,7 @@ mod implementation {
     const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
     const LOG_TRUNCATION_NOTICE: &[u8] = b"\n[logcut: command output truncated at 10 MiB]\n";
 
-    pub(super) fn redact_log_file_limited(path: &Path) -> io::Result<()> {
+    pub(super) fn redact_log_file_limited(path: &Path) -> io::Result<bool> {
         crate::logging::redact_log_file(path)?;
 
         let (temporary_path, temporary_file) = create_temporary_file(path)?;
@@ -18,7 +18,7 @@ mod implementation {
         path: &Path,
         temporary_path: &Path,
         temporary_file: File,
-    ) -> io::Result<()> {
+    ) -> io::Result<bool> {
         let source = File::open(path)?;
         let length = source.metadata()?.len();
         let mut reader = BufReader::new(source.take(length));
@@ -34,15 +34,16 @@ mod implementation {
             write_redacted_line(&line, &mut writer)?;
         }
 
-        let (file, _) =
+        let (file, truncated) =
             crate::logging::finish_limited_file(writer, MAX_LOG_BYTES, LOG_TRUNCATION_NOTICE)?;
         drop(file);
-        fs::rename(temporary_path, path)
+        fs::rename(temporary_path, path)?;
+        Ok(truncated)
     }
 
     include!("secret_masking_impl.rs");
 }
 
-pub(super) fn redact_log_file(path: &std::path::Path) -> std::io::Result<()> {
+pub(super) fn redact_log_file(path: &std::path::Path) -> std::io::Result<bool> {
     implementation::redact_log_file_limited(path)
 }

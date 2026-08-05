@@ -540,12 +540,7 @@ fn terminate_after_runtime_failure(
     }
 
     let notice = runtime_failure_notice(&error);
-    record_runtime_failure(
-        log_path,
-        &notice,
-        &cleanup_notes,
-        capture_truncated,
-    );
+    record_runtime_failure(log_path, &notice, &cleanup_notes, capture_truncated);
     RunOutcome::RuntimeFailure
 }
 

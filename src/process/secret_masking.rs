@@ -3,11 +3,11 @@ mod implementation {
     const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
     const LOG_TRUNCATION_NOTICE: &[u8] = b"\n[logcut: command output truncated at 10 MiB]\n";
 
-    pub(super) fn redact_log_file_limited(path: &Path) -> io::Result<()> {
+    pub(super) fn redact_log_file_limited(
+        path: &Path,
+        already_truncated: bool,
+    ) -> io::Result<()> {
         crate::logging::redact_log_file(path)?;
-        let already_truncated = fs::read(path)?
-            .windows(LOG_TRUNCATION_NOTICE.len())
-            .any(|window| window == LOG_TRUNCATION_NOTICE);
 
         let (temporary_path, temporary_file) = create_temporary_file(path)?;
         let result = redact_file_to_limited(path, &temporary_path, temporary_file);
@@ -53,6 +53,9 @@ mod implementation {
     include!("secret_masking_impl.rs");
 }
 
-pub(super) fn redact_log_file(path: &std::path::Path) -> std::io::Result<()> {
-    implementation::redact_log_file_limited(path)
+pub(super) fn redact_log_file(
+    path: &std::path::Path,
+    already_truncated: bool,
+) -> std::io::Result<()> {
+    implementation::redact_log_file_limited(path, already_truncated)
 }

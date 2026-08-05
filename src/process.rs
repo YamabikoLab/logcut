@@ -128,10 +128,7 @@ fn create_capture_file(log_path: &Path) -> io::Result<(File, File)> {
 
     for _ in 0..CAPTURE_FILE_ATTEMPTS {
         let sequence = CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let capture_path = directory.join(format!(
-            ".logcut-capture-{}-{sequence}",
-            process::id()
-        ));
+        let capture_path = directory.join(format!(".logcut-capture-{}-{sequence}", process::id()));
 
         let writer = match OpenOptions::new()
             .write(true)

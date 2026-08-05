@@ -79,6 +79,42 @@ fn oversized_output_is_truncated_without_changing_exit_code() {
 }
 
 #[test]
+fn masking_expansion_keeps_the_retained_log_within_the_limit() {
+    let root = TestDir::new("logcut-issue-52", "masked-truncate");
+    let logs = root.join("logs");
+    prepare_log_directory(&logs);
+
+    let output = Command::new(binary())
+        .env("LOGCUT_LOG_DIRECTORY", &logs)
+        .args([
+            "sh",
+            "-c",
+            "yes password=x | head -c 11534336; exit 52",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(52));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("command output exceeded 10 MiB and was truncated"));
+
+    let files = log_files(&logs);
+    assert_eq!(files.len(), 1);
+    let log = fs::read(&files[0]).unwrap();
+    assert!(log.len() as u64 <= MAX_LOG_BYTES);
+    assert!(log
+        .windows(b"[REDACTED]".len())
+        .any(|value| value == b"[REDACTED]"));
+    assert!(!log
+        .windows(b"password=x".len())
+        .any(|value| value == b"password=x"));
+    assert!(log
+        .windows(b"[logcut: command output truncated at 10 MiB]".len())
+        .any(|value| value == b"[logcut: command output truncated at 10 MiB]"));
+    assert!(directory_bytes(&logs) <= MAX_LOG_BYTES + 64);
+}
+
+#[test]
 fn capture_storage_stays_bounded_while_the_foreground_command_is_running() {
     let root = TestDir::new("logcut-issue-52", "running-storage");
     let logs = root.join("logs");

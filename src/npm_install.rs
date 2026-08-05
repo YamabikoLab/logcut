@@ -342,7 +342,9 @@ mod tests {
         assert_eq!(summary[0], "Code: EACCES");
         assert_eq!(summary[1], "Cause: filesystem permission was denied");
         assert!(summary.iter().any(|line| line == "code EACCES"));
-        assert!(summary.iter().any(|line| line.contains("permission denied")));
+        assert!(summary
+            .iter()
+            .any(|line| line.contains("permission denied")));
         assert!(!summary.iter().any(|line| line.contains("ERESOLVE")));
         assert!(!summary
             .iter()

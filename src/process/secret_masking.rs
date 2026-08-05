@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod implementation {
     include!("secret_masking_impl.rs");
 

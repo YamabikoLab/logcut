@@ -43,4 +43,6 @@ mod implementation {
     }
 }
 
-pub(super) use implementation::redact_log_file_limited as redact_log_file;
+pub(super) fn redact_log_file(path: &std::path::Path) -> std::io::Result<()> {
+    implementation::redact_log_file_limited(path)
+}

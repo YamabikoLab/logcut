@@ -35,6 +35,67 @@ struct MarkerIdentity {
     inode: u64,
 }
 
+pub(crate) struct LimitedWriter<W> {
+    inner: W,
+    limit: usize,
+    written: usize,
+    truncated: bool,
+}
+
+impl<W> LimitedWriter<W> {
+    pub(crate) fn new(inner: W, limit: usize) -> Self {
+        Self {
+            inner,
+            limit,
+            written: 0,
+            truncated: false,
+        }
+    }
+
+    fn into_parts(self) -> (W, bool) {
+        (self.inner, self.truncated)
+    }
+}
+
+impl<W: Write> Write for LimitedWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let keep = buffer.len().min(self.limit.saturating_sub(self.written));
+        if keep > 0 {
+            self.inner.write_all(&buffer[..keep])?;
+            self.written += keep;
+        }
+        if keep < buffer.len() {
+            self.truncated = true;
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+pub(crate) fn finish_limited_file(
+    mut writer: LimitedWriter<BufWriter<File>>,
+    max_bytes: usize,
+    truncation_notice: &[u8],
+) -> io::Result<(File, bool)> {
+    writer.flush()?;
+    let (writer, truncated) = writer.into_parts();
+    let mut file = writer.into_inner().map_err(|error| error.into_error())?;
+
+    if truncated {
+        let notice_length = truncation_notice.len().min(max_bytes);
+        let notice_start = max_bytes - notice_length;
+        file.set_len(notice_start as u64)?;
+        file.seek(SeekFrom::Start(notice_start as u64))?;
+        file.write_all(&truncation_notice[..notice_length])?;
+    }
+
+    file.sync_all()?;
+    Ok((file, truncated))
+}
+
 pub(crate) fn prepare_log_file(settings: &crate::Settings) -> io::Result<PathBuf> {
     match fs::symlink_metadata(&settings.log_directory) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -241,8 +302,23 @@ fn create_unique_log(directory: &Path) -> io::Result<PathBuf> {
 }
 
 pub(crate) fn redact_log_file(path: &Path) -> io::Result<()> {
+    redact_log_file_inner(path, None).map(|_| ())
+}
+
+pub(crate) fn redact_log_file_with_limit(
+    path: &Path,
+    max_bytes: usize,
+    truncation_notice: &[u8],
+) -> io::Result<bool> {
+    redact_log_file_inner(path, Some((max_bytes, truncation_notice)))
+}
+
+fn redact_log_file_inner(
+    path: &Path,
+    limit: Option<(usize, &[u8])>,
+) -> io::Result<bool> {
     let (temporary_path, temporary_file) = create_redacted_log(path)?;
-    let result = redact_log_file_to(path, &temporary_path, temporary_file);
+    let result = redact_log_file_to(path, &temporary_path, temporary_file, limit);
     if result.is_err() {
         let _ = fs::remove_file(&temporary_path);
     }
@@ -285,17 +361,32 @@ fn create_redacted_log(path: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
-fn redact_log_file_to(path: &Path, temporary_path: &Path, temporary_file: File) -> io::Result<()> {
+fn redact_log_file_to(
+    path: &Path,
+    temporary_path: &Path,
+    temporary_file: File,
+    limit: Option<(usize, &[u8])>,
+) -> io::Result<bool> {
     let source = File::open(path)?;
     let length = source.metadata()?.len();
     let mut reader = BufReader::new(source.take(length));
-    let mut writer = BufWriter::new(temporary_file);
-    redact_stream(&mut reader, &mut writer)?;
-    writer.flush()?;
-    let file = writer.into_inner().map_err(|error| error.into_error())?;
-    file.sync_all()?;
+
+    let (file, truncated) = if let Some((max_bytes, truncation_notice)) = limit {
+        let mut writer = LimitedWriter::new(BufWriter::new(temporary_file), max_bytes);
+        redact_stream(&mut reader, &mut writer)?;
+        finish_limited_file(writer, max_bytes, truncation_notice)?
+    } else {
+        let mut writer = BufWriter::new(temporary_file);
+        redact_stream(&mut reader, &mut writer)?;
+        writer.flush()?;
+        let file = writer.into_inner().map_err(|error| error.into_error())?;
+        file.sync_all()?;
+        (file, false)
+    };
+
     drop(file);
-    fs::rename(temporary_path, path)
+    fs::rename(temporary_path, path)?;
+    Ok(truncated)
 }
 
 fn redact_stream<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> io::Result<()> {
@@ -734,6 +825,24 @@ mod tests {
         assert!(redacted
             .windows(b"[REDACTED]".len())
             .any(|value| value == b"[REDACTED]"));
+    }
+
+    #[test]
+    fn limited_persisted_redaction_caps_expanding_output() {
+        const LIMIT: usize = 128;
+        const NOTICE: &[u8] = b"\n[truncated]\n";
+
+        let path = temporary_log("limited-persisted-redaction");
+        fs::write(&path, "password=x\n".repeat(100)).unwrap();
+
+        let truncated = redact_log_file_with_limit(&path, LIMIT, NOTICE).unwrap();
+        let redacted = fs::read(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert!(truncated);
+        assert_eq!(redacted.len(), LIMIT);
+        assert!(redacted.ends_with(NOTICE));
+        assert!(!redacted.windows(10).any(|value| value == b"password=x"));
     }
 
     #[test]

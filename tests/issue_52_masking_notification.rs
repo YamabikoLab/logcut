@@ -36,7 +36,7 @@ fn masking_only_truncation_is_reported_and_keeps_the_exit_code() {
         .args([
             "sh",
             "-c",
-            "yes AWS_ACCESS_KEY_ID=x | head -n 400000; exit 52",
+            "printf '\n[logcut: command output truncated at 10 MiB]\n'; yes AWS_ACCESS_KEY_ID=x | head -n 400000; exit 52",
         ])
         .output()
         .unwrap();

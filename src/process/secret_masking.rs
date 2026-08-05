@@ -1,7 +1,5 @@
 #[allow(dead_code)]
 mod implementation {
-    include!("secret_masking_impl.rs");
-
     const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
     const LOG_TRUNCATION_NOTICE: &[u8] = b"\n[logcut: command output truncated at 10 MiB]\n";
 
@@ -41,6 +39,8 @@ mod implementation {
         drop(file);
         fs::rename(temporary_path, path)
     }
+
+    include!("secret_masking_impl.rs");
 }
 
 pub(super) fn redact_log_file(path: &std::path::Path) -> std::io::Result<()> {

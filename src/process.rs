@@ -6,11 +6,12 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::mem;
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
-use std::process::{self, Child, Command, Stdio};
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,11 +19,13 @@ const SIGNAL_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const FORWARDED_SIGNALS: [c_int; 3] = [libc::SIGHUP, libc::SIGINT, libc::SIGTERM];
 const RUNTIME_FAILURE_EXIT_CODE: i32 = 70;
 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
+const POST_EXIT_DRAIN_BYTES: usize = 1024 * 1024;
 const LOG_TRUNCATION_NOTICE: &str = "\n[logcut: command output truncated at 10 MiB]\n";
-const CAPTURE_FILE_ATTEMPTS: usize = 100;
+const CAPTURE_OK: u8 = b'0';
+const CAPTURE_TRUNCATED: u8 = b'1';
+const CAPTURE_FAILED: u8 = b'E';
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
-static CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RunOutcome {
@@ -123,72 +126,220 @@ fn finish_forwarded_signal(process_group: pid_t, forwarded_at: Instant, already_
     }
 }
 
-fn create_capture_file(log_path: &Path) -> io::Result<(File, File)> {
-    let directory = log_path.parent().unwrap_or_else(|| Path::new("."));
-
-    for _ in 0..CAPTURE_FILE_ATTEMPTS {
-        let sequence = CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let capture_path = directory.join(format!(".logcut-capture-{}-{sequence}", process::id()));
-
-        let writer = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&capture_path)
-        {
-            Ok(writer) => writer,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        };
-
-        let reader = match File::open(&capture_path) {
-            Ok(reader) => reader,
-            Err(error) => {
-                drop(writer);
-                let _ = fs::remove_file(&capture_path);
-                return Err(error);
-            }
-        };
-
-        if let Err(error) = fs::remove_file(&capture_path) {
-            drop(reader);
-            drop(writer);
-            let _ = fs::remove_file(&capture_path);
-            return Err(error);
-        }
-
-        return Ok((reader, writer));
+fn set_nonblocking(file: &File) -> io::Result<()> {
+    let descriptor = file.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
     }
-
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "could not create a unique command output capture file",
-    ))
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
-fn append_captured_output(mut reader: File, log_path: &Path) -> io::Result<bool> {
-    let mut log = OpenOptions::new().append(true).open(log_path)?;
-    let retained_end = MAX_LOG_BYTES.saturating_sub(LOG_TRUNCATION_NOTICE.len());
-    let original_len = log.metadata()?.len();
-    let retained_base = original_len.min(retained_end as u64);
-    let mut truncated = original_len > retained_base;
+fn set_blocking(file: &File) -> io::Result<()> {
+    let descriptor = file.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags & !libc::O_NONBLOCK) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
 
-    if original_len != retained_base {
-        log.set_len(retained_base)?;
+fn pipe_files() -> io::Result<(File, File)> {
+    let mut descriptors = [0; 2];
+    if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } == -1 {
+        return Err(io::Error::last_os_error());
     }
 
-    let mut retained = retained_base as usize;
+    let reader = unsafe { File::from_raw_fd(descriptors[0]) };
+    let writer = unsafe { File::from_raw_fd(descriptors[1]) };
+    Ok((reader, writer))
+}
+
+fn output_pipe() -> io::Result<(File, File)> {
+    let (reader, writer) = pipe_files()?;
+    set_nonblocking(&reader)?;
+    Ok((reader, writer))
+}
+
+struct CaptureController {
+    control: File,
+    status: File,
+}
+
+impl CaptureController {
+    fn finish(mut self) -> io::Result<bool> {
+        let control_error = self.control.write_all(&[1]).err();
+        drop(self.control);
+
+        let mut response = Vec::new();
+        match self.status.read_to_end(&mut response) {
+            Ok(_) if !response.is_empty() => parse_capture_response(&response),
+            Ok(_) => Err(control_error.unwrap_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "output capture process exited without reporting a result",
+                )
+            })),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn parse_capture_response(response: &[u8]) -> io::Result<bool> {
+    match response.first().copied() {
+        Some(CAPTURE_OK) => Ok(false),
+        Some(CAPTURE_TRUNCATED) => Ok(true),
+        Some(CAPTURE_FAILED) => Err(io::Error::new(
+            io::ErrorKind::Other,
+            String::from_utf8_lossy(&response[1..]).into_owned(),
+        )),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "output capture process returned an invalid result",
+        )),
+    }
+}
+
+fn close_descriptor_unless_kept(descriptor: RawFd, kept: &[RawFd]) {
+    if !kept.contains(&descriptor) {
+        unsafe {
+            libc::close(descriptor);
+        }
+    }
+}
+
+fn start_capture_process(
+    reader: File,
+    writer_descriptors: &[RawFd],
+    log: File,
+) -> io::Result<CaptureController> {
+    let (control_reader, control_writer) = pipe_files()?;
+    let (status_reader, status_writer) = pipe_files()?;
+    set_nonblocking(&control_reader)?;
+
+    let process_id = unsafe { libc::fork() };
+    if process_id == -1 {
+        return Err(io::Error::last_os_error());
+    }
+
+    if process_id == 0 {
+        drop(control_writer);
+        drop(status_reader);
+        for descriptor in writer_descriptors {
+            unsafe {
+                libc::close(*descriptor);
+            }
+        }
+
+        let kept = [
+            reader.as_raw_fd(),
+            control_reader.as_raw_fd(),
+            status_writer.as_raw_fd(),
+            log.as_raw_fd(),
+        ];
+        close_descriptor_unless_kept(libc::STDIN_FILENO, &kept);
+        close_descriptor_unless_kept(libc::STDOUT_FILENO, &kept);
+        close_descriptor_unless_kept(libc::STDERR_FILENO, &kept);
+
+        capture_process(reader, control_reader, status_writer, log);
+    }
+
+    drop(reader);
+    drop(control_reader);
+    drop(status_writer);
+    drop(log);
+
+    Ok(CaptureController {
+        control: control_writer,
+        status: status_reader,
+    })
+}
+
+fn foreground_exit_requested(control: &mut File) -> io::Result<bool> {
+    let mut signal = [0u8; 1];
+    match control.read(&mut signal) {
+        Ok(0) => Ok(true),
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+            foreground_exit_requested(control)
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn wait_for_output_or_control(reader: &File, control: &File) -> io::Result<()> {
+    let mut descriptors = [
+        libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: libc::POLLIN | libc::POLLHUP,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: control.as_raw_fd(),
+            events: libc::POLLIN | libc::POLLHUP,
+            revents: 0,
+        },
+    ];
+
+    loop {
+        let result = unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as _, -1) };
+        if result >= 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+fn capture_output(
+    reader: &mut File,
+    control: &mut File,
+    log: &mut File,
+) -> io::Result<bool> {
+    let retained_limit = MAX_LOG_BYTES.saturating_sub(LOG_TRUNCATION_NOTICE.len());
+    let mut retained = 0usize;
+    let mut drained_after_exit = 0usize;
+    let mut foreground_exited = false;
+    let mut truncated = false;
     let mut buffer = [0u8; 8192];
 
     loop {
+        if !foreground_exited && foreground_exit_requested(control)? {
+            foreground_exited = true;
+        }
+        if foreground_exited && drained_after_exit >= POST_EXIT_DRAIN_BYTES {
+            truncated = true;
+            break;
+        }
+
         let count = match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(count) => count,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if foreground_exited {
+                    break;
+                }
+                wait_for_output_or_control(reader, control)?;
+                continue;
+            }
             Err(error) => return Err(error),
         };
 
-        let remaining = retained_end.saturating_sub(retained);
+        if foreground_exited {
+            drained_after_exit = drained_after_exit.saturating_add(count);
+        }
+
+        let remaining = retained_limit.saturating_sub(retained);
         let keep = count.min(remaining);
         if keep > 0 {
             log.write_all(&buffer[..keep])?;
@@ -196,7 +347,6 @@ fn append_captured_output(mut reader: File, log_path: &Path) -> io::Result<bool>
         }
         if keep < count {
             truncated = true;
-            break;
         }
     }
 
@@ -205,6 +355,48 @@ fn append_captured_output(mut reader: File, log_path: &Path) -> io::Result<bool>
     }
     log.flush()?;
     Ok(truncated)
+}
+
+fn write_capture_response(mut status: File, result: &io::Result<bool>) {
+    let response = match result {
+        Ok(false) => vec![CAPTURE_OK],
+        Ok(true) => vec![CAPTURE_TRUNCATED],
+        Err(error) => {
+            let mut response = vec![CAPTURE_FAILED];
+            response.extend_from_slice(error.to_string().as_bytes());
+            response
+        }
+    };
+    let _ = status.write_all(&response);
+}
+
+fn drain_remaining_output(reader: &mut File) {
+    if set_blocking(reader).is_ok() {
+        let _ = io::copy(reader, &mut io::sink());
+        return;
+    }
+
+    let mut buffer = [0u8; 8192];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn capture_process(mut reader: File, mut control: File, status: File, mut log: File) -> ! {
+    let result = capture_output(&mut reader, &mut control, &mut log);
+    drop(log);
+    drop(control);
+    write_capture_response(status, &result);
+    drain_remaining_output(&mut reader);
+    unsafe { libc::_exit(0) }
 }
 
 fn finalize_log(log_path: &Path) {
@@ -370,9 +562,13 @@ pub(crate) fn run_suppressed(
 ) -> io::Result<i32> {
     RECEIVED_SIGNAL.store(0, Ordering::SeqCst);
     let _signal_handlers = SignalHandlers::install()?;
-    let (capture_reader, capture_writer) = create_capture_file(log_path)?;
-    let stdout = Stdio::from(capture_writer.try_clone()?);
-    let stderr = Stdio::from(capture_writer.try_clone()?);
+    let (reader, writer) = output_pipe()?;
+    let stdout_writer = writer.try_clone()?;
+    let writer_descriptors = [writer.as_raw_fd(), stdout_writer.as_raw_fd()];
+    let log = OpenOptions::new().append(true).open(log_path)?;
+    let capture = start_capture_process(reader, &writer_descriptors, log)?;
+    let stdout = Stdio::from(stdout_writer);
+    let stderr = Stdio::from(writer);
 
     let mut command = Command::new(&arguments[0]);
     command
@@ -394,9 +590,7 @@ pub(crate) fn run_suppressed(
         });
     }
 
-    let spawn_result = command.spawn();
-    drop(capture_writer);
-    let mut child = match spawn_result {
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error)
             if matches!(
@@ -405,30 +599,34 @@ pub(crate) fn run_suppressed(
             ) =>
         {
             drop(command);
-            let status = if error.kind() == io::ErrorKind::NotFound {
-                127
-            } else {
-                126
-            };
-            let capture_result = append_captured_output(capture_reader, log_path);
+            let capture_result = capture.finish();
             if let Err(capture_error) = capture_result {
+                let status = if error.kind() == io::ErrorKind::NotFound {
+                    127
+                } else {
+                    126
+                };
                 record_capture_failure(log_path, &capture_error, status);
             }
             let mut log = OpenOptions::new().append(true).open(log_path)?;
             writeln!(log, "logcut: failed to execute command: {error}")?;
             drop(log);
             finalize_log(log_path);
-            return Ok(status);
+            return Ok(if error.kind() == io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            });
         }
         Err(error) => {
             drop(command);
-            let _ = append_captured_output(capture_reader, log_path);
+            let _ = capture.finish();
             return Err(error);
         }
     };
 
     // `Command` retains the configured `Stdio` handles after `spawn`. Drop it so the
-    // parent closes its copies while descendants retain ordinary regular-file output.
+    // parent closes its copies of the pipe writers.
     drop(command);
 
     let process_group = child.id() as pid_t;
@@ -441,7 +639,7 @@ pub(crate) fn run_suppressed(
             Ok(status) => status,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
-                let capture_error = append_captured_output(capture_reader, log_path).err();
+                let capture_error = capture.finish().err();
                 return Ok(terminate_after_runtime_failure(
                     &mut child,
                     process_group,
@@ -487,7 +685,7 @@ pub(crate) fn run_suppressed(
         thread::sleep(Duration::from_millis(20));
     };
 
-    let capture_result = append_captured_output(capture_reader, log_path);
+    let capture_result = capture.finish();
     let status = if forwarded != 0 {
         if let Some(time) = forwarded_at {
             finish_forwarded_signal(process_group, time, killed);

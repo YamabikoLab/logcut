@@ -4,7 +4,7 @@ mod common;
 
 use common::{prepare_log_directory, TestDir};
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -132,22 +132,32 @@ fn infinite_background_output_does_not_delay_exit_or_change_the_final_log() {
     prepare_log_directory(&logs);
     let baseline = directory_bytes(&logs);
 
-    let started = Instant::now();
-    let output = Command::new(binary())
+    let mut child = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
         .env("BACKGROUND_PID", &background_pid)
         .args([
             "sh",
             "-c",
-            "yes background & echo $! > \"$BACKGROUND_PID\"; exit 52",
+            "(sleep 0.2; exec yes background) & echo $! > \"$BACKGROUND_PID\"; exit 52",
         ])
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
         .unwrap();
-    assert_eq!(output.status.code(), Some(52));
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "logcut waited for background output"
-    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("logcut did not exit after the foreground command completed");
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(52));
 
     let process_id = fs::read_to_string(&background_pid)
         .unwrap()

@@ -86,11 +86,7 @@ fn masking_expansion_keeps_the_retained_log_within_the_limit() {
 
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
-        .args([
-            "sh",
-            "-c",
-            "yes password=x | head -c 11534336; exit 52",
-        ])
+        .args(["sh", "-c", "yes password=x | head -c 11534336; exit 52"])
         .output()
         .unwrap();
 

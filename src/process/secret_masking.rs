@@ -3,8 +3,7 @@ mod implementation {
     include!("secret_masking_impl.rs");
 
     const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
-    const LOG_TRUNCATION_NOTICE: &[u8] =
-        b"\n[logcut: command output truncated at 10 MiB]\n";
+    const LOG_TRUNCATION_NOTICE: &[u8] = b"\n[logcut: command output truncated at 10 MiB]\n";
 
     pub(super) fn redact_log_file_limited(path: &Path) -> io::Result<()> {
         crate::logging::redact_log_file(path)?;
@@ -25,10 +24,8 @@ mod implementation {
         let source = File::open(path)?;
         let length = source.metadata()?.len();
         let mut reader = BufReader::new(source.take(length));
-        let mut writer = crate::logging::LimitedWriter::new(
-            BufWriter::new(temporary_file),
-            MAX_LOG_BYTES,
-        );
+        let mut writer =
+            crate::logging::LimitedWriter::new(BufWriter::new(temporary_file), MAX_LOG_BYTES);
         let mut line = Vec::new();
 
         loop {
@@ -39,11 +36,8 @@ mod implementation {
             write_redacted_line(&line, &mut writer)?;
         }
 
-        let (file, _) = crate::logging::finish_limited_file(
-            writer,
-            MAX_LOG_BYTES,
-            LOG_TRUNCATION_NOTICE,
-        )?;
+        let (file, _) =
+            crate::logging::finish_limited_file(writer, MAX_LOG_BYTES, LOG_TRUNCATION_NOTICE)?;
         drop(file);
         fs::rename(temporary_path, path)
     }

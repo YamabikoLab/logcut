@@ -755,10 +755,8 @@ fn command_label(arguments: &[OsString]) -> String {
                 || "git transfer".to_string(),
                 |value| format!("git {value}"),
             ),
-            CommandProfile::NpmInstall => npm_subcommand(arguments).map_or_else(
-                || "npm install".to_string(),
-                |value| format!("npm {value}"),
-            ),
+            CommandProfile::NpmInstall => npm_subcommand(arguments)
+                .map_or_else(|| "npm install".to_string(), |value| format!("npm {value}")),
         };
     }
 

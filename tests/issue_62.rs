@@ -14,13 +14,20 @@ fn binary() -> &'static str {
 
 fn fake_command(root: &Path, name: &str, body: &str, exit_code: i32) -> PathBuf {
     let path = root.join(name);
-    let script = format!("#!/bin/sh\ncat <<'LOGCUT_OUTPUT'\n{body}LOGCUT_OUTPUT\nexit {exit_code}\n");
+    let script =
+        format!("#!/bin/sh\ncat <<'LOGCUT_OUTPUT'\n{body}LOGCUT_OUTPUT\nexit {exit_code}\n");
     fs::write(&path, script).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     path
 }
 
-fn run_command(name: &str, executable: &str, arguments: &[&str], body: &str, exit_code: i32) -> Output {
+fn run_command(
+    name: &str,
+    executable: &str,
+    arguments: &[&str],
+    body: &str,
+    exit_code: i32,
+) -> Output {
     let root = TestDir::new("logcut-issue-62", name);
     let command_path = fake_command(&root, executable, body, exit_code);
     let mut command = Command::new(binary());
@@ -65,10 +72,7 @@ fn npm_install_commands_are_detected_from_the_subcommand() {
         ("npm-ci", vec!["ci"]),
         ("npm-install", vec!["install"]),
         ("npm-i", vec!["i", "example@1.0.0"]),
-        (
-            "npm-lock-only",
-            vec!["install", "--package-lock-only"],
-        ),
+        ("npm-lock-only", vec!["install", "--package-lock-only"]),
         (
             "npm-workspace",
             vec!["--workspace", "packages/example", "install"],
@@ -159,5 +163,8 @@ fn npm_install_profile_can_be_selected_explicitly() {
     assert_eq!(output.status.code(), Some(7), "{text}");
     assert!(text.contains("Failure summary (npm-install)"), "{text}");
     assert!(text.contains("Code: E401"), "{text}");
-    assert!(text.contains("Cause: registry authentication failed"), "{text}");
+    assert!(
+        text.contains("Cause: registry authentication failed"),
+        "{text}"
+    );
 }

@@ -122,10 +122,9 @@ fn find_error_code(output: &str) -> Option<&'static str> {
     for line in output.lines() {
         let detail = strip_npm_prefix(line);
         for code in ERROR_CODES {
-            if detail.split(|character: char| {
-                !character.is_ascii_alphanumeric() && character != '_'
-            })
-            .any(|token| token == code)
+            if detail
+                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .any(|token| token == code)
             {
                 return Some(code);
             }
@@ -185,7 +184,8 @@ fn strip_npm_prefix(line: &str) -> &str {
     let trimmed = line.trim();
     for prefix in ["npm ERR!", "npm error", "npm WARN", "npm warn"] {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
-            return rest.trim_start_matches(|character: char| character == '!' || character == ':')
+            return rest
+                .trim_start_matches(|character: char| character == '!' || character == ':')
                 .trim();
         }
     }
@@ -272,7 +272,9 @@ mod tests {
 
         assert_eq!(summary[0], "Code: ERESOLVE");
         assert_eq!(summary[1], "Cause: dependency tree could not be resolved");
-        assert!(summary.iter().any(|line| line == "While resolving: example@1.0.0"));
+        assert!(summary
+            .iter()
+            .any(|line| line == "While resolving: example@1.0.0"));
         assert!(summary.iter().any(|line| line == "Found: react@18.3.1"));
         assert!(summary
             .iter()
@@ -285,8 +287,13 @@ mod tests {
         let summary = summarize(output, 20, 20);
 
         assert_eq!(summary[0], "Code: EUSAGE");
-        assert_eq!(summary[1], "Cause: package.json and lock file are not in sync");
-        assert!(summary.iter().any(|line| line.contains("package-lock.json")));
+        assert_eq!(
+            summary[1],
+            "Cause: package.json and lock file are not in sync"
+        );
+        assert!(summary
+            .iter()
+            .any(|line| line.contains("package-lock.json")));
         assert!(summary.iter().any(|line| line.contains("eslint@8.0.0")));
     }
 
@@ -296,7 +303,9 @@ mod tests {
         let summary = summarize_success(output, 20);
 
         assert!(summary[0].contains("added 12 packages"));
-        assert!(summary.iter().any(|line| line == "Peer dependency warnings: 1"));
+        assert!(summary
+            .iter()
+            .any(|line| line == "Peer dependency warnings: 1"));
         assert!(summary.iter().any(|line| line == "Deprecated warnings: 1"));
         assert!(summary
             .iter()

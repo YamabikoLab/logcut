@@ -29,6 +29,10 @@ pub(crate) fn summarize(output: &str, maximum: usize, max_errors: usize) -> Vec<
     let mut context_remaining = 0usize;
 
     for line in output.lines() {
+        if is_npm_warning(line) {
+            continue;
+        }
+
         let detail = strip_npm_prefix(line);
         if detail.is_empty() || is_noise(detail) {
             continue;
@@ -74,9 +78,7 @@ pub(crate) fn summarize_success(output: &str, maximum: usize) -> Vec<String> {
         if is_package_change_summary(&lower) {
             push_unique(&mut result, trimmed.to_string(), maximum);
         }
-        if lower.contains("npm warn")
-            && (lower.contains("peer dependency") || lower.contains("peer dep"))
-        {
+        if is_peer_dependency_warning_start(&lower) {
             peer_warnings += 1;
         }
         if lower.contains("npm warn deprecated") {
@@ -120,17 +122,41 @@ pub(crate) fn summarize_success(output: &str, maximum: usize) -> Vec<String> {
 
 fn find_error_code(output: &str) -> Option<&'static str> {
     for line in output.lines() {
-        let detail = strip_npm_prefix(line);
-        for code in ERROR_CODES {
-            if detail
-                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-                .any(|token| token == code)
-            {
-                return Some(code);
+        let Some(detail) = strip_npm_error_prefix(line) else {
+            continue;
+        };
+        let mut tokens =
+            detail.split(|character: char| !character.is_ascii_alphanumeric() && character != '_');
+
+        if tokens
+            .next()
+            .is_some_and(|token| token.eq_ignore_ascii_case("code"))
+        {
+            for token in tokens {
+                if let Some(code) = ERROR_CODES.into_iter().find(|code| token == *code) {
+                    return Some(code);
+                }
             }
         }
     }
+
+    for line in output.lines() {
+        if is_npm_warning(line) {
+            continue;
+        }
+
+        if let Some(code) = find_known_code(strip_npm_prefix(line)) {
+            return Some(code);
+        }
+    }
+
     None
+}
+
+fn find_known_code(detail: &str) -> Option<&'static str> {
+    detail
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .find_map(|token| ERROR_CODES.into_iter().find(|code| token == *code))
 }
 
 fn classify(code: Option<&str>, output: &str) -> Option<&'static str> {
@@ -151,7 +177,12 @@ fn classify(code: Option<&str>, output: &str) -> Option<&'static str> {
 }
 
 fn classify_from_output(output: &str) -> Option<&'static str> {
-    let lower = output.to_ascii_lowercase();
+    let lower = output
+        .lines()
+        .filter(|line| !is_npm_warning(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
 
     if lower.contains("could not resolve dependency")
         || lower.contains("conflicting peer dependency")
@@ -180,14 +211,38 @@ fn classify_from_output(output: &str) -> Option<&'static str> {
     }
 }
 
-fn strip_npm_prefix(line: &str) -> &str {
+fn strip_npm_error_prefix(line: &str) -> Option<&str> {
     let trimmed = line.trim();
-    for prefix in ["npm ERR!", "npm error", "npm WARN", "npm warn"] {
+    for prefix in ["npm ERR!", "npm error"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return Some(rest.trim_start_matches(['!', ':']).trim());
+        }
+    }
+    None
+}
+
+fn strip_npm_prefix(line: &str) -> &str {
+    if let Some(detail) = strip_npm_error_prefix(line) {
+        return detail;
+    }
+
+    let trimmed = line.trim();
+    for prefix in ["npm WARN", "npm warn"] {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
             return rest.trim_start_matches(['!', ':']).trim();
         }
     }
     trimmed
+}
+
+fn is_npm_warning(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("npm WARN") || trimmed.starts_with("npm warn")
+}
+
+fn is_peer_dependency_warning_start(lower: &str) -> bool {
+    lower.starts_with("npm warn eresolve")
+        && (lower.contains("peer dependency") || lower.contains("peer dep"))
 }
 
 fn is_context_marker(detail: &str) -> bool {
@@ -280,6 +335,21 @@ mod tests {
     }
 
     #[test]
+    fn prioritizes_explicit_error_after_peer_dependency_warning_block() {
+        let output = "npm warn ERESOLVE overriding peer dependency\nnpm warn While resolving: example@1.0.0\nnpm warn Found: react@18.3.1\nnpm warn Conflicting peer dependency: react@17.0.2\nnpm error code EACCES\nnpm error syscall mkdir\nnpm error path /usr/local/lib/node_modules/example\nnpm error Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules/example'\n";
+        let summary = summarize(output, 20, 20);
+
+        assert_eq!(summary[0], "Code: EACCES");
+        assert_eq!(summary[1], "Cause: filesystem permission was denied");
+        assert!(summary.iter().any(|line| line == "code EACCES"));
+        assert!(summary.iter().any(|line| line.contains("permission denied")));
+        assert!(!summary.iter().any(|line| line.contains("ERESOLVE")));
+        assert!(!summary
+            .iter()
+            .any(|line| line.contains("Conflicting peer dependency")));
+    }
+
+    #[test]
     fn summarizes_lock_file_mismatch() {
         let output = "npm error code EUSAGE\nnpm error `npm ci` can only install packages when your package.json and package-lock.json are in sync.\nnpm error Invalid: lock file's eslint@8.0.0 does not satisfy eslint@9.0.0\n";
         let summary = summarize(output, 20, 20);
@@ -297,7 +367,7 @@ mod tests {
 
     #[test]
     fn summarizes_success_without_routine_noise() {
-        let output = "npm warn deprecated old-package@1.0.0: no longer supported\nnpm warn ERESOLVE overriding peer dependency\nadded 12 packages, removed 1 package, and changed 2 packages in 3s\n3 vulnerabilities (1 moderate, 2 high)\n";
+        let output = "npm warn deprecated old-package@1.0.0: no longer supported\nnpm warn ERESOLVE overriding peer dependency\nnpm warn Found: react@18.3.1\nnpm warn node_modules/react\nnpm warn Conflicting peer dependency: react@17.0.2\nadded 12 packages, removed 1 package, and changed 2 packages in 3s\n3 vulnerabilities (1 moderate, 2 high)\n";
         let summary = summarize_success(output, 20);
 
         assert!(summary[0].contains("added 12 packages"));

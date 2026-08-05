@@ -184,9 +184,7 @@ fn strip_npm_prefix(line: &str) -> &str {
     let trimmed = line.trim();
     for prefix in ["npm ERR!", "npm error", "npm WARN", "npm warn"] {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
-            return rest
-                .trim_start_matches(|character: char| character == '!' || character == ':')
-                .trim();
+            return rest.trim_start_matches(['!', ':']).trim();
         }
     }
     trimmed

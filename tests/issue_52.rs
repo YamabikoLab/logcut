@@ -149,7 +149,10 @@ fn long_lived_background_output_does_not_grow_disk_storage() {
     assert!(descriptor_bytes(process_id, 1) <= MAX_LOG_BYTES);
     assert!(before <= MAX_LOG_BYTES);
     assert!(after <= MAX_LOG_BYTES);
-    assert_eq!(after, before, "background output continued consuming disk space");
+    assert_eq!(
+        after, before,
+        "background output continued consuming disk space"
+    );
 
     unsafe {
         libc::kill(process_id, libc::SIGTERM);

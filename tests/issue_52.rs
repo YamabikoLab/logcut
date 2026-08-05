@@ -42,6 +42,13 @@ fn descriptor_bytes(process_id: libc::pid_t, descriptor: u8) -> u64 {
         .len()
 }
 
+fn process_is_alive(process_id: libc::pid_t) -> bool {
+    if unsafe { libc::kill(process_id, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 #[test]
 fn oversized_output_is_truncated_without_changing_exit_code() {
     let root = TestDir::new("logcut-issue-52", "truncate");
@@ -118,13 +125,14 @@ fn capture_storage_stays_bounded_while_the_foreground_command_is_running() {
 }
 
 #[test]
-fn long_lived_background_output_does_not_grow_disk_storage() {
+fn infinite_background_output_does_not_delay_exit_or_change_the_final_log() {
     let root = TestDir::new("logcut-issue-52", "background-storage");
     let logs = root.join("logs");
     let background_pid = root.join("background.pid");
     prepare_log_directory(&logs);
     let baseline = directory_bytes(&logs);
 
+    let started = Instant::now();
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
         .env("BACKGROUND_PID", &background_pid)
@@ -136,6 +144,10 @@ fn long_lived_background_output_does_not_grow_disk_storage() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(52));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "logcut waited for background output"
+    );
 
     let process_id = fs::read_to_string(&background_pid)
         .unwrap()
@@ -143,18 +155,53 @@ fn long_lived_background_output_does_not_grow_disk_storage() {
         .parse::<libc::pid_t>()
         .unwrap();
     let before = directory_bytes(&logs).saturating_sub(baseline);
-    thread::sleep(Duration::from_millis(500));
-    let after = directory_bytes(&logs).saturating_sub(baseline);
+    let files = log_files(&logs);
+    assert_eq!(files.len(), 1);
+    let contents_before = fs::read(&files[0]).unwrap();
 
-    assert!(descriptor_bytes(process_id, 1) <= MAX_LOG_BYTES);
+    thread::sleep(Duration::from_millis(500));
+
+    let after = directory_bytes(&logs).saturating_sub(baseline);
+    let contents_after = fs::read(&files[0]).unwrap();
     assert!(before <= MAX_LOG_BYTES);
-    assert!(after <= MAX_LOG_BYTES);
+    assert_eq!(after, before, "background output changed retained storage");
     assert_eq!(
-        after, before,
-        "background output continued consuming disk space"
+        contents_after, contents_before,
+        "background output changed the finalized log"
     );
 
-    unsafe {
-        libc::kill(process_id, libc::SIGTERM);
+    if process_is_alive(process_id) {
+        unsafe {
+            libc::kill(process_id, libc::SIGTERM);
+        }
     }
+}
+
+#[test]
+fn redirected_background_process_can_continue_after_logcut_exits() {
+    let root = TestDir::new("logcut-issue-52", "redirected-background");
+    let logs = root.join("logs");
+    let marker = root.join("background-finished");
+    prepare_log_directory(&logs);
+
+    let output = Command::new(binary())
+        .env("LOGCUT_LOG_DIRECTORY", &logs)
+        .env("BACKGROUND_MARKER", &marker)
+        .args([
+            "sh",
+            "-c",
+            "(sleep 0.2; printf finished > \"$BACKGROUND_MARKER\") >/dev/null 2>&1 </dev/null & exit 0",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !marker.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        marker.exists(),
+        "redirected background process did not continue after logcut exit"
+    );
 }

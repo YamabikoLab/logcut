@@ -10,12 +10,14 @@ mod npm_install;
 mod phpcbf;
 mod playwright;
 mod process;
+mod retained_log;
 mod stylelint;
 mod summary;
 
 use logging::{normalize_output, prepare_log_file, prune_logs, read_log};
 use phpcbf::successful_nonzero_exit;
 use process::run_suppressed;
+use retained_log::{sanitize_log_file, secure_log_file};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -114,6 +116,48 @@ fn report_failed_log_discard(cleanup: &mut FailedLogCleanup<'_>) {
                 cleanup.path.display()
             );
             eprintln!("Full log may remain: {}", cleanup.path.display());
+        }
+    }
+}
+
+fn secure_retained_log(path: &Path) {
+    if let Err(error) = sanitize_log_file(path) {
+        eprintln!(
+            "logcut: failed to sanitize retained log {}: {error}",
+            path.display()
+        );
+        eprintln!(
+            "logcut: warning: unsafe terminal-control data may remain in {}",
+            path.display()
+        );
+    }
+}
+
+fn cleanup_success_log(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            eprintln!(
+                "logcut: failed to remove successful command log {}: {error}",
+                path.display()
+            );
+            match secure_log_file(path) {
+                Ok(()) => eprintln!(
+                    "logcut: the remaining log was sanitized and retained at {}",
+                    path.display()
+                ),
+                Err(sanitize_error) => {
+                    eprintln!(
+                        "logcut: failed to sanitize the remaining log {}: {sanitize_error}",
+                        path.display()
+                    );
+                    eprintln!(
+                        "logcut: warning: unmasked or unsafe terminal-control data may remain in {}",
+                        path.display()
+                    );
+                }
+            }
         }
     }
 }
@@ -344,7 +388,7 @@ fn handle_command_result(
 ) -> io::Result<i32> {
     if status == 0 {
         print_success(elapsed, label, arguments, log_path, settings);
-        let _ = fs::remove_file(log_path);
+        cleanup_success_log(log_path);
         return Ok(0);
     }
 
@@ -355,6 +399,7 @@ fn handle_command_result(
             eprintln!("FAIL ({elapsed}s, exit {status}): {label}");
             eprintln!("logcut: failure summary could not be generated: {error}");
             if settings.retain_failed_log {
+                secure_retained_log(log_path);
                 eprintln!("Full log: {}", log_path.display());
             } else {
                 report_failed_log_discard(&mut cleanup);
@@ -392,7 +437,7 @@ fn handle_command_result(
             };
             if successful_nonzero_exit(selected, status, &clean) {
                 println!("PASS ({elapsed}s): {label}");
-                let _ = fs::remove_file(log_path);
+                cleanup_success_log(log_path);
                 return Ok(0);
             }
             (
@@ -414,6 +459,7 @@ fn handle_command_result(
     }
 
     if settings.retain_failed_log {
+        secure_retained_log(log_path);
         eprintln!("\nFull log: {}", log_path.display());
         prune_logs(
             &settings.log_directory,

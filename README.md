@@ -45,6 +45,7 @@ When a command fails, it reports a concise profile-specific summary. By default,
 - Shows a profile-specific failure summary when the command fails.
 - Falls back to the tail of the log when no profile-specific summary is available.
 - Keeps the full log on failure by default and removes it on success.
+- Limits captured command output to 10 MiB per log file and reports when additional output is truncated.
 - Can discard the full failure log after generating the summary with `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0`.
 - Returns the original command exit code, except for a successful PHPCBF repair reported with exit code `1`.
 - Forwards stdin to the child command.
@@ -69,11 +70,11 @@ Secret masking is best effort. It covers the documented common key/value, header
 
 ## Install from GitHub Release
 
-Download `SHA256SUMS` and the archive matching your system from the `v0.1.19` GitHub Release:
+Download `SHA256SUMS` and the archive matching your system from the `v0.1.20` GitHub Release:
 
 ```text
-logcut-v0.1.19-x86_64-unknown-linux-gnu.tar.gz
-logcut-v0.1.19-aarch64-unknown-linux-gnu.tar.gz
+logcut-v0.1.20-x86_64-unknown-linux-gnu.tar.gz
+logcut-v0.1.20-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
@@ -89,7 +90,7 @@ Verify the downloaded archive, extract it, and install the binary for the curren
 
 ```bash
 sha256sum --ignore-missing --check SHA256SUMS
-tar -xzf logcut-v0.1.19-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf logcut-v0.1.20-x86_64-unknown-linux-gnu.tar.gz
 mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
@@ -119,7 +120,7 @@ PASS (0s): true
 When a Rust toolchain is available, install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.19 --locked
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v0.1.20 --locked
 logcut true
 ```
 
@@ -208,6 +209,8 @@ found 0 vulnerabilities
 
 When a command fails, `logcut` prints a concise summary and, by default, the path to the retained full log. The retained log is rewritten with the same best-effort secret masking used for summaries before its path is reported.
 
+Command output is captured up to 10 MiB per log file. When the limit is reached, `logcut` continues reading and discarding additional output while the foreground command is running, adds a truncation marker to the log, and prints a notification. After the foreground command exits, the capture helper performs a bounded best-effort drain and terminates. The child command's exit code is preserved.
+
 When `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` is used, `logcut` still generates the failure summary and preserves the command exit code, then removes the log and prints `Full log discarded.` instead of a path. The CLI option takes precedence over the environment setting.
 
 ## Profiles
@@ -218,7 +221,7 @@ The default profile is `auto`. Supported profiles are:
 | --- | --- |
 | `auto` | Detect the profile from the command or command output. |
 | `jest` | Summarize Jest test failures. |
-| `vitest` | Summarize Vitest failures. |
+| `vitest` | Summarize Vitest test failures. |
 | `prettier` | Summarize Prettier formatting failures. |
 | `eslint` | Summarize ESLint errors. |
 | `stylelint` | Summarize Stylelint errors. |

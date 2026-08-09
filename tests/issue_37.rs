@@ -141,6 +141,7 @@ fn large_output_is_processed_without_changing_the_exit_code() {
 fn background_writer_does_not_extend_log_finalization() {
     let root = TestDir::new("logcut-issue-37", "background-writer");
     let bin = root.join("bin");
+    let background_pid = root.join("background.pid");
     fs::create_dir_all(&bin).unwrap();
     write_fake_command(
         &bin,
@@ -153,6 +154,7 @@ fn background_writer_does_not_extend_log_finalization() {
     sleep 0.01
   done
 ) &
+printf '%s\n' "$!" > "$BACKGROUND_PID"
 printf '%s\n' 'password=foreground-secret'
 exit 7"#,
     );
@@ -162,6 +164,7 @@ exit 7"#,
     let started = Instant::now();
     let output = Command::new(binary())
         .env("PATH", path)
+        .env("BACKGROUND_PID", &background_pid)
         .env("LOGCUT_LOG_DIRECTORY", root.join("logs"))
         .arg("background-writer")
         .output()
@@ -174,6 +177,15 @@ exit 7"#,
         elapsed < Duration::from_secs(1),
         "log finalization followed background writes for {elapsed:?}"
     );
+
+    let process_id = fs::read_to_string(&background_pid)
+        .unwrap()
+        .trim()
+        .parse::<libc::pid_t>()
+        .unwrap();
+    unsafe {
+        libc::kill(process_id, libc::SIGTERM);
+    }
 
     let log = fs::read_to_string(retained_log(&root)).unwrap();
     assert!(!log.contains("foreground-secret"), "{log}");

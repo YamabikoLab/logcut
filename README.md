@@ -57,8 +57,9 @@ When a command fails, it reports a concise profile-specific summary. By default,
 - Creates new log directories with mode `0700`, without changing permissions on existing directories.
 - Marks logcut-owned directories with `.logcut-directory` and prunes logs only after validating the directory and marker.
 - Rejects existing non-empty directories that cannot be confirmed as logcut-owned.
+- Refuses to execute the child command when secure logging or output-suppression setup cannot be established.
 
-An existing `LOGCUT_LOG_DIRECTORY` can be initialized only when it is empty, owned by the current user, and already has mode `0700`. Existing non-empty directories require a valid `.logcut-directory` marker owned by the current user with mode `0600`. When secure logging cannot be established, logcut uses its existing direct-execution fallback and does not create, modify, or prune files in that directory.
+An existing `LOGCUT_LOG_DIRECTORY` can be initialized only when it is empty, owned by the current user, and already has mode `0700`. Existing non-empty directories require a valid `.logcut-directory` marker owned by the current user with mode `0600`. When secure logging cannot be established, logcut exits with an error without executing the child command. To run the command directly in that situation, invoke it without `logcut`.
 
 Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, environment-variable, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
 
@@ -300,6 +301,16 @@ Watch, follow, and interactive modes are not targeted by these command profiles.
 | `LOGCUT_RETAIN_FAILED_LOG` | `1` | Set to `0` to discard the full log after a failure summary. |
 
 Invalid positive-integer settings are reported and replaced with their defaults. `LOGCUT_RETAIN_FAILED_LOG` accepts `0` or `1`; invalid values are reported and treated as `1`.
+
+## Versioning
+
+Starting with v1.0.0, the documented CLI, option names, environment variables, exit-code behavior, and profile-selection rules are treated as public compatibility commitments and are versioned according to Semantic Versioning.
+
+- `1.0.x`: backward-compatible bug fixes and small improvements
+- `1.x.0`: backward-compatible feature additions
+- `2.0.0`: breaking changes to the public CLI, settings, or other documented compatibility commitments
+
+A `v0.2.0` release is not required before `v1.0.0`. It is only needed if a substantial breaking reorganization is intentionally introduced before v1.0.0.
 
 ## Development
 

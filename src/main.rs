@@ -17,7 +17,7 @@ mod summary;
 use logging::{normalize_output, prepare_log_file, prune_logs, read_log};
 use phpcbf::successful_nonzero_exit;
 use process::run_suppressed;
-use retained_log::secure_log_file;
+use retained_log::{sanitize_log_file, secure_log_file};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -121,13 +121,13 @@ fn report_failed_log_discard(cleanup: &mut FailedLogCleanup<'_>) {
 }
 
 fn secure_retained_log(path: &Path) {
-    if let Err(error) = secure_log_file(path) {
+    if let Err(error) = sanitize_log_file(path) {
         eprintln!(
             "logcut: failed to sanitize retained log {}: {error}",
             path.display()
         );
         eprintln!(
-            "logcut: warning: unmasked or unsafe terminal-control data may remain in {}",
+            "logcut: warning: unsafe terminal-control data may remain in {}",
             path.display()
         );
     }

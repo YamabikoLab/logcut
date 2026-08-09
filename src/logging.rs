@@ -13,7 +13,6 @@ use std::path::Path;
 const MAX_LOG_BYTES: usize = 10 * 1024 * 1024;
 const LOG_TRUNCATION_NOTICE: &[u8] = b"\n[logcut: command output truncated at 10 MiB]\n";
 
-pub(crate) fn redact_log_file(path: &Path) -> io::Result<()> {
+pub(crate) fn redact_log_file(path: &Path) -> io::Result<bool> {
     implementation::redact_log_file_with_limit(path, MAX_LOG_BYTES, LOG_TRUNCATION_NOTICE)
-        .map(|_| ())
 }

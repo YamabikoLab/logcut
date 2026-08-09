@@ -74,9 +74,7 @@ fn normal_masking_truncation_is_reported_once_and_keeps_the_exit_code() {
     let logs = root.join("logs");
     prepare_log_directory(&logs);
 
-    let command = format!(
-        "yes TOKEN=x | head -n {NORMAL_MASKING_LINE_COUNT}; exit 52"
-    );
+    let command = format!("yes TOKEN=x | head -n {NORMAL_MASKING_LINE_COUNT}; exit 52");
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
         .args(["sh", "-c", &command])

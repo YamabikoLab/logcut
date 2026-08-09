@@ -114,7 +114,8 @@ fn invalid_utf8_and_control_bytes_do_not_crash_log_masking() {
     assert_eq!(output.status.code(), Some(9), "{text}");
 
     let log = fs::read(retained_log(&root)).unwrap();
-    assert!(log.starts_with(b"normal\0bytes\n"), "{log:?}");
+    assert!(log.starts_with(b"normalbytes\n"), "{log:?}");
+    assert!(!log.contains(&0));
     assert!(!log.windows(b"hidden".len()).any(|value| value == b"hidden"));
     assert!(!log.windows(b"value".len()).any(|value| value == b"value"));
     assert!(log

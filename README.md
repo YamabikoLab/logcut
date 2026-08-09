@@ -4,13 +4,14 @@ Reduce AI token usage with concise failure summaries for WordPress development c
 
 `logcut` is a Linux command-line tool for AI-assisted WordPress plugin and theme development. It keeps successful command output quiet and extracts the useful parts of failed output, so an AI coding assistant receives a focused result instead of a long stream of routine logs.
 
-It is especially useful with PHPCS, PHPCBF, PHPUnit, PHPStan, `wp-scripts`, Stylelint, Composer, and other commands commonly used in WordPress development. Docker, Git, Jest, Vitest, and the other supported profiles remain available for the surrounding development workflow.
+It is especially useful with PHPCS, PHPCBF, PHPUnit, PHPStan, `wp-scripts`, Stylelint, Composer, npm dependency installation, and other commands commonly used in WordPress development. Docker, Git, Jest, Vitest, and the other supported profiles remain available for the surrounding development workflow.
 
 ## WordPress development examples
 
 Run the commands you already use through `logcut`:
 
 ```bash
+logcut npm ci
 logcut --profile=phpcs composer lint:php
 logcut --profile=phpcbf composer format:php
 logcut --profile=phpunit composer test
@@ -40,11 +41,10 @@ When a command fails, it reports a concise profile-specific summary. By default,
 
 - Prints the command name and argument count before execution.
 - Suppresses successful command output and prints a short `PASS` line.
-- Preserves a minimal success result for Docker builds and Git transfers.
+- Preserves a minimal success result for npm dependency installation, Docker builds, and Git transfers.
 - Shows a profile-specific failure summary when the command fails.
 - Falls back to the tail of the log when no profile-specific summary is available.
 - Keeps the full log on failure by default and removes it on success.
-- Limits captured command output to 10 MiB per log file and reports when additional output is truncated.
 - Can discard the full failure log after generating the summary with `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0`.
 - Returns the original command exit code, except for a successful PHPCBF repair reported with exit code `1`.
 - Forwards stdin to the child command.
@@ -167,6 +167,8 @@ Examples:
 ```bash
 logcut --version
 logcut --help
+logcut npm ci
+logcut npm install --package-lock-only
 logcut npm test
 logcut --no-retain-log npm test
 LOGCUT_RETAIN_FAILED_LOG=0 logcut npm test
@@ -180,6 +182,7 @@ logcut docker compose build web
 logcut git push origin main
 logcut git pull --ff-only
 logcut git fetch --prune
+logcut --profile=npm-install sh -c './custom-npm-install-wrapper'
 logcut --profile=docker-build sh -c './custom-build-command'
 logcut --profile=git-transfer sh -c './custom-git-wrapper'
 ```
@@ -193,18 +196,17 @@ Running: npm [1 args]
 PASS (2s): npm [1 args]
 ```
 
-Docker build and Git transfer commands retain a small amount of useful success information. For example:
+npm dependency installation, Docker build, and Git transfer commands retain a small amount of useful success information. For example:
 
 ```text
-Running: git push
-PASS (1s): git push
-Remote: github.com:YamabikoLab/logcut.git
-1111111..2222222  main -> main
+Running: npm ci
+PASS (3s): npm ci
+added 182 packages, and audited 183 packages in 3s
+Deprecated warnings: 2
+found 0 vulnerabilities
 ```
 
 When a command fails, `logcut` prints a concise summary and, by default, the path to the retained full log. The retained log is rewritten with the same best-effort secret masking used for summaries before its path is reported.
-
-Command output is captured up to 10 MiB per log file. When the limit is reached, `logcut` continues reading and discarding additional output so the child command can finish, adds a truncation marker to the log, and prints a notification. The child command's exit code is preserved.
 
 When `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` is used, `logcut` still generates the failure summary and preserves the command exit code, then removes the log and prints `Full log discarded.` instead of a path. The CLI option takes precedence over the environment setting.
 
@@ -231,15 +233,29 @@ The default profile is `auto`. Supported profiles are:
 | `webpack` | Summarize webpack build failures. |
 | `composer` | Summarize Composer failures. |
 | `playwright` | Summarize Playwright test failures. |
+| `npm-install` | Summarize npm dependency installation results. |
 | `docker-build` | Summarize `docker build` and `docker compose build` results. |
 | `git-transfer` | Summarize `git push`, `git pull`, and `git fetch` results. |
 | `generic` | Show the tail of the command output. |
 
-Stylelint output for CSS, SCSS, Sass, and Less files is detected automatically, including failures left after `lint-style --fix`. PHPCS, PHPCBF, webpack output from `wp-scripts build`, Docker BuildKit output, and common Git transfer output are also detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
+Stylelint output for CSS, SCSS, Sass, and Less files is detected automatically, including failures left after `lint-style --fix`. PHPCS, PHPCBF, webpack output from `wp-scripts build`, npm dependency installation, Docker BuildKit output, and common Git transfer output are also detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
 
-For supported Docker and Git commands, `auto` also uses the executable and subcommand. This avoids relying on a generic word such as `build`, `push`, or `fetch` in unrelated output.
+For supported npm, Docker, and Git commands, `auto` also uses the executable and subcommand. This avoids relying on generic words such as `install`, `build`, `push`, or `fetch` in unrelated output.
 
 The profile can be selected with `--profile=PROFILE` or `LOGCUT_PROFILE`.
+
+### npm dependency installation summaries
+
+The `npm-install` profile keeps the npm error code and the most useful dependency context, including:
+
+- `While resolving`, `Found`, `Could not resolve dependency`, and conflicting peer dependency details
+- `package.json` and lock-file mismatches
+- package names and requested or resolved versions
+- registry authentication, authorization, package availability, filesystem permission, disk space, network, and certificate errors
+- added, removed, and changed package counts on success
+- peer dependency, deprecated package, and vulnerability counts on success
+
+`auto` selects this profile for `npm ci`, `npm install`, `npm i`, and `npm install --package-lock-only`. It does not select it for `npm run`, `npm ls`, or `npx`.
 
 ### Docker build summaries
 
@@ -264,7 +280,7 @@ The `git-transfer` profile keeps remotes, branch/ref updates, commit ranges, and
 
 It covers `git push`, `git pull`, and `git fetch`. Information-oriented commands such as `git status`, `git log`, `git diff`, and `git show` remain outside this profile.
 
-Watch, follow, and interactive modes are not targeted by either profile.
+Watch, follow, and interactive modes are not targeted by these command profiles.
 
 ## Environment variables
 

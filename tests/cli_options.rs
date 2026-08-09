@@ -45,6 +45,9 @@ fn help_flags_show_usage_options_and_profiles() {
             "webpack",
             "composer",
             "playwright",
+            "npm-install",
+            "docker-build",
+            "git-transfer",
             "generic",
         ] {
             assert!(text.contains(profile), "missing profile {profile}: {text}");

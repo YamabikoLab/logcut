@@ -4,17 +4,16 @@ mod implementation {
     const LOG_TRUNCATION_NOTICE: &[u8] = b"\n[logcut: command output truncated at 10 MiB]\n";
 
     pub(super) fn redact_log_file_limited(path: &Path, already_truncated: bool) -> io::Result<()> {
-        crate::logging::redact_log_file(path)?;
+        let normal_masking_truncated = crate::logging::redact_log_file(path)?;
 
         let (temporary_path, temporary_file) = create_temporary_file(path)?;
         let result = redact_file_to_limited(path, &temporary_path, temporary_file);
         if result.is_err() {
             let _ = fs::remove_file(&temporary_path);
         }
-        if result
-            .as_ref()
-            .is_ok_and(|truncated| *truncated && !already_truncated)
-        {
+        if result.as_ref().is_ok_and(|extended_masking_truncated| {
+            (normal_masking_truncated || *extended_masking_truncated) && !already_truncated
+        }) {
             eprintln!("logcut: command output exceeded 10 MiB and was truncated");
         }
         result.map(|_| ())

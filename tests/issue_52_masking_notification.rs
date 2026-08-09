@@ -8,6 +8,9 @@ use std::process::Command;
 
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 const TRUNCATION_MARKER: &[u8] = b"[logcut: command output truncated at 10 MiB]";
+const NORMAL_MASKING_LINE_COUNT: u64 = 700_000;
+const NORMAL_MASKING_RAW_LINE_BYTES: u64 = b"TOKEN=x\n".len() as u64;
+const _: () = assert!(NORMAL_MASKING_LINE_COUNT * NORMAL_MASKING_RAW_LINE_BYTES < MAX_LOG_BYTES);
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_logcut")
@@ -67,22 +70,16 @@ fn masking_only_truncation_is_reported_and_keeps_the_exit_code() {
 
 #[test]
 fn normal_masking_truncation_is_reported_once_and_keeps_the_exit_code() {
-    const LINE_COUNT: u64 = 700_000;
-    const RAW_LINE_BYTES: u64 = b"TOKEN=x\n".len() as u64;
-
-    assert!(LINE_COUNT * RAW_LINE_BYTES < MAX_LOG_BYTES);
-
     let root = TestDir::new("logcut-issue-52", "normal-masking-truncate");
     let logs = root.join("logs");
     prepare_log_directory(&logs);
 
+    let command = format!(
+        "yes TOKEN=x | head -n {NORMAL_MASKING_LINE_COUNT}; exit 52"
+    );
     let output = Command::new(binary())
         .env("LOGCUT_LOG_DIRECTORY", &logs)
-        .args([
-            "sh",
-            "-c",
-            "yes TOKEN=x | head -n 700000; exit 52",
-        ])
+        .args(["sh", "-c", &command])
         .output()
         .unwrap();
 

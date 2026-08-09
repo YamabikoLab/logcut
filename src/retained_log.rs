@@ -59,7 +59,11 @@ fn create_sanitized_log(path: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
-fn sanitize_log_file_to(path: &Path, temporary_path: &Path, temporary_file: File) -> io::Result<()> {
+fn sanitize_log_file_to(
+    path: &Path,
+    temporary_path: &Path,
+    temporary_file: File,
+) -> io::Result<()> {
     let source = File::open(path)?;
     let length = source.metadata()?.len();
     let mut reader = BufReader::new(source.take(length));
@@ -190,9 +194,6 @@ mod tests {
         let sanitized = fs::read(&path).unwrap();
         let _ = fs::remove_file(&path);
 
-        assert_eq!(
-            sanitized,
-            b"normal\ttext red\nnextline\ninvalid:\xff\xfe\n"
-        );
+        assert_eq!(sanitized, b"normal\ttext red\nnextline\ninvalid:\xff\xfe\n");
     }
 }

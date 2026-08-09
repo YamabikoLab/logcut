@@ -6,6 +6,70 @@ Reduce AI token usage with concise failure summaries for WordPress development c
 
 It is especially useful with PHPCS, PHPCBF, PHPUnit, PHPStan, `wp-scripts`, Stylelint, Composer, npm dependency installation, and other commands commonly used in WordPress development. Docker, Git, Jest, Vitest, and the other supported profiles remain available for the surrounding development workflow.
 
+## WordPress development examples
+
+Run the commands you already use through `logcut`:
+
+```bash
+logcut npm ci
+logcut --profile=phpcs composer lint:php
+logcut --profile=phpcbf composer format:php
+logcut --profile=phpunit composer test
+logcut --profile=phpstan composer analyse
+logcut --profile=stylelint npm run lint:css
+logcut npm run build
+```
+
+When a command succeeds, `logcut` normally returns only a short result:
+
+```text
+Running: composer [1 args]
+PASS (2s): composer [1 args]
+```
+
+When a command fails, it reports a concise profile-specific summary. By default, it also retains the full failure log after applying best-effort secret masking; use `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` to discard the log after summary generation.
+
+## Why use logcut
+
+- Reduce routine command output sent to AI coding assistants.
+- Surface the errors and file locations that matter first.
+- Use WordPress-focused profiles without changing the underlying commands.
+- Preserve the original exit code and choose whether to retain or discard the full failure log.
+- Apply best-effort redaction of common secrets to summaries and retained failure logs.
+
+## Behavior
+
+- Prints the command name and argument count before execution.
+- Suppresses successful command output and prints a short `PASS` line.
+- Preserves a minimal success result for npm dependency installation, Docker builds, and Git transfers.
+- Shows a profile-specific failure summary when the command fails.
+- Falls back to the tail of the log when no profile-specific summary is available.
+- Keeps the full log on failure by default and removes it on success.
+- Warns if a successful command log cannot be removed and attempts to sanitize any remaining log before reporting its path.
+- Limits captured command output to 10 MiB per log file and reports when additional output is truncated.
+- Can discard the full failure log after generating the summary with `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0`.
+- Returns the original command exit code, except for a successful PHPCBF repair reported with exit code `1`.
+- Forwards stdin to the child command.
+- Forwards `HUP`, `INT`, and `TERM` to the child process group.
+- Runs the child command with the caller's original umask.
+- Removes terminal escape sequences and unsafe control characters from summaries and retained logs.
+- Redacts common authorization headers, token/password assignments, CI and cloud credential environment variables, and URL credentials from summaries and retained failure logs.
+- Creates new log directories with mode `0700`, without changing permissions on existing directories.
+- Marks logcut-owned directories with `.logcut-directory` and prunes logs only after validating the directory and marker.
+- Rejects existing non-empty directories that cannot be confirmed as logcut-owned.
+- Refuses to execute the child command when secure logging or output-suppression setup cannot be established.
+
+An existing `LOGCUT_LOG_DIRECTORY` can be initialized only when it is empty, owned by the current user, and already has mode `0700`. Existing non-empty directories require a valid `.logcut-directory` marker owned by the current user with mode `0600`. When secure logging cannot be established, logcut exits with an error without executing the child command. To run the command directly in that situation, invoke it without `logcut`.
+
+Secret masking is best effort. It covers the documented common key/value, header, JSON, quoted-value, environment-variable, and URL userinfo forms, but it cannot guarantee detection of unknown formats, arbitrary confidential data, multiline secrets, certificates, or private keys. Avoid printing secrets whenever possible, even when using `logcut`.
+
+`--no-retain-log` and `LOGCUT_RETAIN_FAILED_LOG=0` remove the failure log during normal completion after the summary is generated. They do not guarantee that plaintext is never written to disk or that a log cannot remain after forced termination or an operating-system failure.
+
+## Requirements
+
+- Linux x86_64 or ARM64 with GNU/glibc for the prebuilt binaries
+- Linux and Rust 1.70 or later when building from source
+
 ## Install from GitHub Release
 
 Download `SHA256SUMS` and the archive matching your system from the `v1.0.0` GitHub Release:
@@ -16,3 +80,251 @@ logcut-v1.0.0-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
+Check the machine architecture when needed:
+
+```bash
+uname -m
+```
+
+Use the `x86_64` archive when the command prints `x86_64`, or the `aarch64` archive when it prints `aarch64` or `arm64`.
+
+Verify the downloaded archive, extract it, and install the binary for the current user. The following example uses the x86_64 archive:
+
+```bash
+sha256sum --ignore-missing --check SHA256SUMS
+tar -xzf logcut-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+mkdir -p ~/.local/bin
+install -m 0755 logcut ~/.local/bin/logcut
+```
+
+Make sure `~/.local/bin` is included in `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+command -v logcut
+```
+
+Run a harmless command through the installed binary to confirm that it works:
+
+```bash
+logcut true
+```
+
+Expected output is similar to:
+
+```text
+Running: true
+PASS (0s): true
+```
+
+## Install from Git
+
+When a Rust toolchain is available, install directly from the repository:
+
+```bash
+cargo install --git https://github.com/YamabikoLab/logcut.git --tag v1.0.0 --locked
+logcut true
+```
+
+## Build
+
+```bash
+cargo build --release --locked
+```
+
+The binary is created at:
+
+```text
+target/release/logcut
+```
+
+To install the current checkout for the current user:
+
+```bash
+cargo install --path . --locked
+```
+
+Make sure Cargo's binary directory is included in `PATH`:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+## Usage
+
+```bash
+logcut [OPTIONS] <command> [arguments...]
+```
+
+Options:
+
+```text
+--profile=PROFILE  Select the failure-summary profile (default: auto)
+--no-retain-log    Discard the full log after a failure summary
+-h, --help         Print help
+-V, --version      Print version
+```
+
+Examples:
+
+```bash
+logcut --version
+logcut --help
+logcut npm ci
+logcut npm install --package-lock-only
+logcut npm test
+logcut --no-retain-log npm test
+LOGCUT_RETAIN_FAILED_LOG=0 logcut npm test
+logcut --profile=jest npm test
+logcut --profile=stylelint npm run lint:css
+logcut --profile=phpcs composer lint:php
+logcut --profile=webpack npm run build
+logcut --profile=playwright npm run test:e2e
+logcut docker build -t example/app:dev .
+logcut docker compose build web
+logcut git push origin main
+logcut git pull --ff-only
+logcut git fetch --prune
+logcut --profile=npm-install sh -c './custom-npm-install-wrapper'
+logcut --profile=docker-build sh -c './custom-build-command'
+logcut --profile=git-transfer sh -c './custom-git-wrapper'
+```
+
+`logcut` options are recognized only before the command. Therefore, `logcut --help` prints logcut's help, while `logcut npm --help` runs `npm --help`.
+
+A successful command normally produces output similar to:
+
+```text
+Running: npm [1 args]
+PASS (2s): npm [1 args]
+```
+
+npm dependency installation, Docker build, and Git transfer commands retain a small amount of useful success information. For example:
+
+```text
+Running: npm ci
+PASS (3s): npm ci
+added 182 packages, and audited 183 packages in 3s
+Deprecated warnings: 2
+found 0 vulnerabilities
+```
+
+When a command fails, `logcut` prints a concise summary and, by default, the path to the retained full log. The retained log is rewritten with the same best-effort secret masking used for summaries and has terminal escape sequences and unsafe control characters removed before its path is reported.
+
+Command output is captured up to 10 MiB per log file. When the limit is reached, `logcut` continues reading and discarding additional output while the foreground command is running, adds a truncation marker to the log, and prints a notification. After the foreground command exits, the capture helper performs a bounded best-effort drain and terminates. The child command's exit code is preserved.
+
+When `--no-retain-log` or `LOGCUT_RETAIN_FAILED_LOG=0` is used, `logcut` still generates the failure summary and preserves the command exit code, then removes the log and prints `Full log discarded.` instead of a path. The CLI option takes precedence over the environment setting.
+
+## Profiles
+
+The default profile is `auto`. Supported profiles are:
+
+| Profile | Description |
+| --- | --- |
+| `auto` | Detect the profile from the command or command output. |
+| `jest` | Summarize Jest test failures. |
+| `vitest` | Summarize Vitest test failures. |
+| `prettier` | Summarize Prettier formatting failures. |
+| `eslint` | Summarize ESLint errors. |
+| `stylelint` | Summarize Stylelint errors. |
+| `typescript` | Summarize TypeScript compiler errors. |
+| `phpunit` | Summarize PHPUnit test failures. |
+| `phpstan` | Summarize PHPStan analysis errors. |
+| `php-lint` | Summarize PHP syntax errors. |
+| `phpcs` | Summarize PHP_CodeSniffer violations. |
+| `phpcbf` | Summarize PHP Code Beautifier and Fixer results. |
+| `contract` | Summarize contract-check failures. |
+| `vite` | Summarize Vite build failures. |
+| `webpack` | Summarize webpack build failures. |
+| `composer` | Summarize Composer failures. |
+| `playwright` | Summarize Playwright test failures. |
+| `npm-install` | Summarize npm dependency installation results. |
+| `docker-build` | Summarize `docker build` and `docker compose build` results. |
+| `git-transfer` | Summarize `git push`, `git pull`, and `git fetch` results. |
+| `generic` | Show the tail of the command output. |
+
+Stylelint output for CSS, SCSS, Sass, and Less files is detected automatically, including failures left after `lint-style --fix`. PHPCS, PHPCBF, webpack output from `wp-scripts build`, npm dependency installation, Docker BuildKit output, and common Git transfer output are also detected automatically. PHPCBF exit code `1` is treated as success only when its result summary reports that errors were fixed and none remain.
+
+For supported npm, Docker, and Git commands, `auto` also uses the executable and subcommand. This avoids relying on generic words such as `install`, `build`, `push`, or `fetch` in unrelated output.
+
+The profile can be selected with `--profile=PROFILE` or `LOGCUT_PROFILE`.
+
+### npm dependency installation summaries
+
+The `npm-install` profile keeps the npm error code and the most useful dependency context, including:
+
+- `While resolving`, `Found`, `Could not resolve dependency`, and conflicting peer dependency details
+- `package.json` and lock-file mismatches
+- package names and requested or resolved versions
+- registry authentication, authorization, package availability, filesystem permission, disk space, network, and certificate errors
+- added, removed, and changed package counts on success
+- peer dependency, deprecated package, and vulnerability counts on success
+
+`auto` selects this profile for `npm ci`, `npm install`, `npm i`, and `npm install --package-lock-only`. It does not select it for `npm run`, `npm ls`, or `npx`.
+
+### Docker build summaries
+
+The `docker-build` profile removes routine BuildKit progress and keeps the most useful available details, including:
+
+- failed Compose service
+- failed build step and Dockerfile location
+- `RUN`, `COPY`, and other Dockerfile instructions
+- exit code and nearby package/build errors
+- successfully built service or image name
+
+It covers `docker build` and `docker compose build`. Commands whose successful output is itself the requested information, such as `docker ps`, `docker images`, `docker logs`, `docker compose ps`, `docker compose logs`, `docker run`, and `docker exec`, remain outside this profile.
+
+### Git transfer summaries
+
+The `git-transfer` profile keeps remotes, branch/ref updates, commit ranges, and results such as new branch, fast-forward, or up to date. Failures are classified when possible, including:
+
+- non-fast-forward rejection
+- missing upstream/tracking configuration
+- merge conflicts
+- authentication, permission, SSH, host-key, repository, branch-policy, hook, network, DNS, and TLS errors
+
+It covers `git push`, `git pull`, and `git fetch`. Information-oriented commands such as `git status`, `git log`, `git diff`, and `git show` remain outside this profile.
+
+Watch, follow, and interactive modes are not targeted by these command profiles.
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | ---: | --- |
+| `LOGCUT_PROFILE` | `auto` | Failure-summary profile. |
+| `LOGCUT_SUMMARY_LINES` | `40` | Maximum number of summary lines. |
+| `LOGCUT_TAIL_LINES` | `40` | Compatibility fallback used when `LOGCUT_SUMMARY_LINES` is unset. |
+| `LOGCUT_MAX_ERRORS` | `20` | Maximum number of errors for profiles that support an error limit. |
+| `LOGCUT_LOG_DIRECTORY` | `/tmp/logcut-<uid>` | Dedicated directory used for retained failure logs. Existing non-empty directories require a valid `.logcut-directory` marker. |
+| `LOGCUT_LOG_MAX_FILES` | `10` | Maximum number of retained logs. |
+| `LOGCUT_LOG_MAX_AGE_DAYS` | `1` | Maximum log age in days. Expired logs are removed on a later `logcut` run. |
+| `LOGCUT_RETAIN_FAILED_LOG` | `1` | Set to `0` to discard the full log after a failure summary. |
+
+Invalid positive-integer settings are reported and replaced with their defaults. `LOGCUT_RETAIN_FAILED_LOG` accepts `0` or `1`; invalid values are reported and treated as `1`.
+
+## Versioning
+
+Starting with v1.0.0, the documented CLI, option names, environment variables, exit-code behavior, and profile-selection rules are treated as public compatibility commitments and are versioned according to Semantic Versioning.
+
+- `1.0.x`: backward-compatible bug fixes and small improvements
+- `1.x.0`: backward-compatible feature additions
+- `2.0.0`: breaking changes to the public CLI, settings, or other documented compatibility commitments
+
+A `v0.2.0` release is not required before `v1.0.0`. It is only needed if a substantial breaking reorganization is intentionally introduced before v1.0.0.
+
+## Development
+
+```bash
+cargo fmt --check
+cargo test --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo build --release --locked
+```
+
+## Scope
+
+This initial version targets Linux only.
+
+## License
+
+This project is licensed under the GNU General Public License v2.0 or later (`GPL-2.0-or-later`). See [LICENSE](LICENSE).

@@ -97,6 +97,13 @@ mkdir -p ~/.local/bin
 install -m 0755 logcut ~/.local/bin/logcut
 ```
 
+GitHub also publishes build provenance for the release artifacts. If GitHub CLI is installed, verify the downloaded archive's attestation:
+
+```bash
+gh attestation verify logcut-v1.0.0-x86_64-unknown-linux-gnu.tar.gz \
+  --repo YamabikoLab/logcut
+```
+
 Make sure `~/.local/bin` is included in `PATH`:
 
 ```bash
@@ -324,6 +331,11 @@ cargo build --release --locked
 ## Scope
 
 This initial version targets Linux only.
+
+## Contributing and security
+
+For bug reports and feature requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For suspected security vulnerabilities, follow [SECURITY.md](SECURITY.md) and report them privately rather than in a public Issue or Pull Request.
 
 ## License
 

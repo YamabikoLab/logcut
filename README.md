@@ -6,6 +6,8 @@ Reduce AI token usage with concise failure summaries for WordPress development c
 
 It is especially useful with PHPCS, PHPCBF, PHPUnit, PHPStan, `wp-scripts`, Stylelint, Composer, npm dependency installation, and other commands commonly used in WordPress development. Docker, Git, Jest, Vitest, and the other supported profiles remain available for the surrounding development workflow.
 
+<img width="1586" height="992" alt="logcut-overview" src="https://github.com/user-attachments/assets/24967b35-65a0-4af4-9572-7cb8811bd36e" />
+
 ## WordPress development examples
 
 Run the commands you already use through `logcut`:
